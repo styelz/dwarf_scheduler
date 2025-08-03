@@ -1,0 +1,35 @@
+{
+    "telescope": {
+        "ip": "192.168.4.1",
+        "port": 80,
+        "timeout": 10,
+        "auto_connect": true,
+        "camera_model": "Dwarf3",
+        "mount_type": "Equatorial"
+    },
+    "location": {
+        "latitude": 40.7128,
+        "longitude": -74.006,
+        "elevation": 10.0,
+        "name": "New York, NY",
+        "timezone": "Australia/Sydney",
+        "utc_offset": 10.0
+    },
+    "defaults": {
+        "frame_count": 50,
+        "exposure_time": 30.0,
+        "gain": 100,
+        "binning": "1x1",
+        "session_wait": 60,
+        "settling_time": 10,
+        "focus_timeout": 300
+    },
+    "advanced": {
+        "log_level": "INFO",
+        "log_to_file": true,
+        "auto_archive": true,
+        "archive_days": 30,
+        "auto_backup": false,
+        "backup_location": ""
+    }
+}

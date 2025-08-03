@@ -1,0 +1,7 @@
+requests>=2.28.0
+Pillow>=9.0.0
+dwarf_python_api@git+https://github.com/stevejcl/dwarf_python_api
+# Optional dependencies for enhanced functionality
+# astropy>=5.0.0  # For advanced astronomical calculations
+# matplotlib>=3.5.0  # For plotting and visualization
+# numpy>=1.21.0  # For numerical operations

@@ -10,7 +10,7 @@ from typing import Dict, Any
 class ConfigManager:
     """Manages application configuration settings."""
     
-    def __init__(self, config_file="config/settings.json"):
+    def __init__(self, config_file="data/config"):
         self.config_file = config_file
         self.logger = logging.getLogger(__name__)
         self.config_dir = os.path.dirname(config_file)
@@ -34,7 +34,7 @@ class ConfigManager:
             },
             "location": {
                 "latitude": 40.7128,
-                "longitude": -74.0060,
+                "longitude": -74.006,
                 "elevation": 10,
                 "name": "New York, NY",
                 "timezone": "America/New_York",
@@ -55,7 +55,8 @@ class ConfigManager:
                 "auto_archive": True,
                 "archive_days": 30,
                 "auto_backup": False,
-                "backup_location": ""
+                "backup_location": "",
+                "history_day_change_hour": 18
             }
         }
         

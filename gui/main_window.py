@@ -54,6 +54,30 @@ class MainWindow:
         # Create status bar
         self.create_status_bar()
         
+        # Start monitoring scheduler status after tabs are created
+        self.monitor_scheduler_status()
+        
+    def monitor_scheduler_status(self):
+        """Monitor and update scheduler status in the status bar."""
+        try:
+            # Get scheduler from schedule tab
+            if hasattr(self, 'schedule_tab') and hasattr(self.schedule_tab, 'scheduler'):
+                scheduler = self.schedule_tab.scheduler
+                
+                if hasattr(scheduler, 'is_running') and scheduler.is_running:
+                    self.update_scheduler_status("Running", "green")
+                else:
+                    self.update_scheduler_status("Stopped", "red")
+            else:
+                self.update_scheduler_status("Unknown", "gray")
+                
+        except Exception as e:
+            self.logger.error(f"Error monitoring scheduler status: {e}")
+            self.update_scheduler_status("Error", "gray")
+        
+        # Schedule next update
+        self.root.after(2000, self.monitor_scheduler_status)  # Update every 2 seconds
+        
     def create_tabs(self):
         """Create all application tabs."""
         # Schedule tab
@@ -63,15 +87,15 @@ class MainWindow:
         # Sessions tab
         self.sessions_tab = SessionsTab(self.notebook, self.config_manager)
         self.notebook.add(self.sessions_tab.frame, text="Sessions")
-        
-        # Settings tab
-        self.settings_tab = SettingsTab(self.notebook, self.config_manager)
-        self.notebook.add(self.settings_tab.frame, text="Settings")
-        
+
         # History tab
         self.history_tab = HistoryTab(self.notebook, self.config_manager)
         self.notebook.add(self.history_tab.frame, text="History")
-        
+
+        # Settings tab
+        self.settings_tab = SettingsTab(self.notebook, self.config_manager)
+        self.notebook.add(self.settings_tab.frame, text="Settings")
+                
         # Bind tab change event to refresh data
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
         
@@ -110,6 +134,15 @@ class MainWindow:
         )
         self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
+        # Scheduler status
+        self.scheduler_status_label = ttk.Label(
+            self.status_frame, 
+            text="Scheduler: Stopped", 
+            relief=tk.SUNKEN,
+            foreground="red"
+        )
+        self.scheduler_status_label.pack(side=tk.RIGHT, padx=(5, 5))
+        
         # Connection status
         self.connection_label = ttk.Label(
             self.status_frame, 
@@ -130,6 +163,11 @@ class MainWindow:
             self.connection_label.config(text="Connected", foreground="green")
         else:
             self.connection_label.config(text="Disconnected", foreground="red")
+    
+    def update_scheduler_status(self, status, color):
+        """Update the scheduler status indicator."""
+        if hasattr(self, 'scheduler_status_label'):
+            self.scheduler_status_label.config(text=f"Scheduler: {status}", foreground=color)
             
     def on_closing(self):
         """Handle window closing event."""

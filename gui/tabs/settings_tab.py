@@ -272,6 +272,23 @@ class SettingsTab:
         ttk.Entry(file_frame, textvariable=self.archive_days_var, width=10).grid(row=1, column=1, sticky=tk.W, pady=2)
         ttk.Label(file_frame, text="days").grid(row=1, column=2, sticky=tk.W, pady=2)
         
+        # History settings
+        history_frame = ttk.LabelFrame(main_frame, text="History Settings", padding=10)
+        history_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Day change hour
+        ttk.Label(history_frame, text="Day change hour:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.day_change_hour_var = tk.StringVar(value="18")
+        day_change_spinbox = tk.Spinbox(history_frame, textvariable=self.day_change_hour_var, 
+                                       from_=0, to=23, width=5, format="%02.0f")
+        day_change_spinbox.grid(row=0, column=1, sticky=tk.W, pady=2)
+        ttk.Label(history_frame, text="(24-hour format, default 18 = 6 PM)").grid(row=0, column=2, sticky=tk.W, pady=2, padx=(5, 0))
+        
+        # Explanation
+        ttk.Label(history_frame, 
+                 text="Sessions before this hour are recorded to the previous day's history file.",
+                 font=("Arial", 8)).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+        
         # Backup settings
         backup_frame = ttk.LabelFrame(main_frame, text="Backup", padding=10)
         backup_frame.pack(fill=tk.X, pady=(0, 10))
@@ -335,6 +352,10 @@ class SettingsTab:
         self.auto_backup_var.set(advanced.get("auto_backup", False))
         self.backup_location_var.set(advanced.get("backup_location", ""))
         
+        # History settings
+        history = config.get("history", {})
+        self.day_change_hour_var.set(str(history.get("day_change_hour", 18)))
+        
     def save_settings(self):
         """Save current settings to configuration."""
         try:
@@ -371,11 +392,13 @@ class SettingsTab:
                     "archive_days": int(self.archive_days_var.get()),
                     "auto_backup": self.auto_backup_var.get(),
                     "backup_location": self.backup_location_var.get()
+                },
+                "history": {
+                    "day_change_hour": int(self.day_change_hour_var.get())
                 }
             }
             
             self.config_manager.save_settings(config)
-            messagebox.showinfo("Success", "Settings saved successfully!")
             self.logger.info("Settings saved")
             
         except ValueError as e:
@@ -389,7 +412,6 @@ class SettingsTab:
         if messagebox.askyesno("Confirm Reset", "Reset all settings to defaults?"):
             self.config_manager.reset_to_defaults()
             self.load_settings()
-            messagebox.showinfo("Reset", "Settings reset to defaults!")
             
     def test_connection(self):
         """Test connection to telescope."""

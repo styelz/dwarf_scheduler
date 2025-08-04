@@ -5,21 +5,21 @@
         "timeout": 10,
         "auto_connect": true,
         "camera_model": "Dwarf3",
-        "mount_type": "Equatorial"
+        "mount_type": "Alt-Az"
     },
     "location": {
         "latitude": 40.7128,
         "longitude": -74.006,
         "elevation": 10.0,
         "name": "New York, NY",
-        "timezone": "Australia/Sydney",
-        "utc_offset": 10.0
+        "timezone": "America/New_York",
+        "utc_offset": -5.0
     },
     "defaults": {
         "frame_count": 50,
         "exposure_time": 30.0,
-        "gain": 100,
-        "binning": "1x1",
+        "gain": 90,
+        "binning": "2x2",
         "session_wait": 60,
         "settling_time": 10,
         "focus_timeout": 300
@@ -31,5 +31,8 @@
         "archive_days": 30,
         "auto_backup": false,
         "backup_location": ""
+    },
+    "history": {
+        "day_change_hour": 18
     }
 }

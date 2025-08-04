@@ -6,43 +6,138 @@ import csv
 import os
 import datetime
 import logging
+import glob
 from typing import List, Dict, Any, Optional
 
 class HistoryManager:
-    """Manages session history tracking and statistics."""
+    """Manages session history tracking and statistics with daily file rotation."""
     
-    def __init__(self, history_file="Sessions/History/session_history.csv"):
-        self.history_file = history_file
+    def __init__(self, config_manager=None, history_dir="Sessions/History"):
+        self.config_manager = config_manager
+        self.history_dir = history_dir
         self.logger = logging.getLogger(__name__)
+        self.active_files = None  # None means all files, list means specific files
         
         # Ensure history directory exists
-        history_dir = os.path.dirname(history_file)
         if not os.path.exists(history_dir):
             os.makedirs(history_dir)
             
-        # Initialize CSV file if it doesn't exist
-        self._initialize_csv()
-        
-    def _initialize_csv(self):
-        """Initialize CSV file with headers if it doesn't exist."""
-        if not os.path.exists(self.history_file):
-            headers = [
-                "date", "time", "session_name", "target_name", "status",
-                "ra", "dec", "frame_count", "frames_captured", "exposure_time",
-                "total_exposure", "gain", "binning", "filter", "duration",
-                "file_size", "auto_focus", "plate_solve", "auto_guide",
-                "temperature", "humidity", "seeing", "notes", "error_message"
-            ]
+        # CSV headers
+        self.csv_headers = [
+            "date", "time", "session_name", "target_name", "status",
+            "ra", "dec", "frame_count", "frames_captured", "exposure_time",
+            "total_exposure", "gain", "binning", "filter", "duration",
+            "file_size", "auto_focus", "plate_solve", "auto_guide",
+            "temperature", "humidity", "seeing", "notes", "error_message"
+        ]
             
-            with open(self.history_file, 'w', newline='', encoding='utf-8') as f:
+    def _get_day_change_hour(self):
+        """Get the hour when the day changes (default 18:00 / 6 PM)."""
+        if self.config_manager:
+            return self.config_manager.get_setting("history", "day_change_hour", 18)
+        return 18
+        
+    def _get_session_date(self, timestamp=None):
+        """Get the session date considering day change hour."""
+        if timestamp is None:
+            timestamp = datetime.datetime.now()
+        elif isinstance(timestamp, str):
+            timestamp = datetime.datetime.fromisoformat(timestamp)
+            
+        day_change_hour = self._get_day_change_hour()
+        
+        # If before day change hour, use previous day
+        if timestamp.hour < day_change_hour:
+            session_date = timestamp.date() - datetime.timedelta(days=1)
+        else:
+            session_date = timestamp.date()
+            
+        return session_date.strftime("%Y-%m-%d")
+        
+    def _get_history_filename(self, session_date):
+        """Get history filename for a specific date."""
+        return os.path.join(self.history_dir, f"session_history_{session_date}.csv")
+        
+    def _initialize_csv(self, filename):
+        """Initialize CSV file with headers if it doesn't exist."""
+        if not os.path.exists(filename):
+            with open(filename, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(headers)
+                writer.writerow(self.csv_headers)
                 
-            self.logger.info(f"Initialized history file: {self.history_file}")
+            self.logger.info(f"Initialized history file: {filename}")
+            
+    def get_history_files(self):
+        """Get list of available history files with metadata."""
+        try:
+            pattern = os.path.join(self.history_dir, "session_history_*.csv")
+            files = glob.glob(pattern)
+            
+            file_list = []
+            for file_path in sorted(files, reverse=True):  # Newest first
+                filename = os.path.basename(file_path)
+                
+                # Extract date from filename
+                date_part = filename.replace("session_history_", "").replace(".csv", "")
+                
+                # Get file stats
+                stat = os.stat(file_path)
+                size = f"{stat.st_size / 1024:.1f} KB" if stat.st_size < 1024*1024 else f"{stat.st_size / (1024*1024):.1f} MB"
+                modified = datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+                
+                # Count sessions in file
+                session_count = 0
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        reader = csv.reader(f)
+                        next(reader)  # Skip header
+                        session_count = sum(1 for _ in reader)
+                except:
+                    pass
+                
+                file_list.append({
+                    'filename': filename,
+                    'filepath': file_path,
+                    'date': date_part,
+                    'sessions': session_count,
+                    'size': size,
+                    'modified': modified
+                })
+                
+            return file_list
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get history files: {e}")
+            return []
+            
+    def set_active_files(self, file_list):
+        """Set which files to load history from. None means all files."""
+        self.active_files = file_list
+        
+    def delete_history_file(self, filename):
+        """Delete a specific history file."""
+        try:
+            file_path = os.path.join(self.history_dir, filename)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                self.logger.info(f"Deleted history file: {filename}")
+            else:
+                raise FileNotFoundError(f"History file not found: {filename}")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to delete history file {filename}: {e}")
+            raise
             
     def add_record(self, record: Dict[str, Any]):
         """Add a session record to history."""
         try:
+            # Determine which file to use based on session date
+            session_date = self._get_session_date(record.get("timestamp"))
+            history_file = self._get_history_filename(session_date)
+            
+            # Initialize file if needed
+            self._initialize_csv(history_file)
+            
             # Prepare record data
             coordinates = record.get("coordinates", {})
             capture_settings = record.get("capture_settings", {})
@@ -82,40 +177,54 @@ class HistoryManager:
                 record.get("error_message", "")
             ]
             
-            # Append to CSV file
-            with open(self.history_file, 'a', newline='', encoding='utf-8') as f:
+            # Append to appropriate CSV file
+            with open(history_file, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow(row_data)
                 
-            self.logger.info(f"Added history record for session: {record.get('session_name', 'Unknown')}")
+            self.logger.info(f"Added history record for session: {record.get('session_name', 'Unknown')} to {os.path.basename(history_file)}")
             
         except Exception as e:
             self.logger.error(f"Failed to add history record: {e}")
             raise
             
     def get_history(self, limit: int = None) -> List[Dict[str, Any]]:
-        """Get session history records."""
+        """Get session history records from active files."""
         try:
-            if not os.path.exists(self.history_file):
-                return []
-                
             records = []
-            with open(self.history_file, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                
-                for row in reader:
-                    # Convert row to more convenient format
-                    record = {
-                        "date": row["date"],
-                        "time": row["time"],
-                        "target": row["target_name"],
-                        "status": row["status"],
-                        "frames_captured": row["frames_captured"],
-                        "exposure_time": row["exposure_time"],
-                        "duration": row["duration"],
-                        "file_size": row["file_size"]
-                    }
-                    records.append(record)
+            
+            # Determine which files to read
+            if self.active_files is None:
+                # Read all files
+                history_files = self.get_history_files()
+                file_paths = [f['filepath'] for f in history_files]
+            else:
+                # Read only specified files
+                file_paths = [os.path.join(self.history_dir, f) for f in self.active_files]
+                file_paths = [f for f in file_paths if os.path.exists(f)]
+            
+            # Read records from all relevant files
+            for file_path in file_paths:
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        reader = csv.DictReader(f)
+                        
+                        for row in reader:
+                            # Convert row to more convenient format
+                            record = {
+                                "date": row["date"],
+                                "time": row["time"],
+                                "target": row["target_name"],
+                                "status": row["status"],
+                                "frames_captured": row["frames_captured"],
+                                "exposure_time": row["exposure_time"],
+                                "duration": row["duration"],
+                                "file_size": row["file_size"]
+                            }
+                            records.append(record)
+                except Exception as e:
+                    self.logger.warning(f"Failed to read history file {file_path}: {e}")
+                    continue
                     
             # Sort by date/time (newest first)
             records.sort(key=lambda x: f"{x['date']} {x['time']}", reverse=True)
@@ -162,34 +271,44 @@ class HistoryManager:
     def get_session_details(self, date: str, time: str, target: str) -> Optional[Dict[str, Any]]:
         """Get detailed information for a specific session."""
         try:
-            if not os.path.exists(self.history_file):
-                return None
-                
-            with open(self.history_file, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                
-                for row in reader:
-                    if (row["date"] == date and 
-                        row["time"] == time and 
-                        row["target_name"] == target):
-                        
-                        # Return full session details
-                        return {
-                            "session_name": row["session_name"],
-                            "ra": row["ra"],
-                            "dec": row["dec"],
-                            "total_exposure": row["total_exposure"],
-                            "gain": row["gain"],
-                            "binning": row["binning"],
-                            "filter": row["filter"],
-                            "auto_focus": row["auto_focus"],
-                            "plate_solve": row["plate_solve"],
-                            "auto_guide": row["auto_guide"],
-                            "temperature": row["temperature"],
-                            "humidity": row["humidity"],
-                            "seeing": row["seeing"],
-                            "notes": row["notes"]
-                        }
+            # Get list of files to process
+            if self.active_files is not None:
+                files_to_process = self.active_files
+            else:
+                history_files = self.get_history_files()
+                files_to_process = [f['filename'] for f in history_files]
+            
+            # Search through all active history files
+            for history_file in files_to_process:
+                file_path = os.path.join(self.history_dir, history_file)
+                if not os.path.exists(file_path):
+                    continue
+                    
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    
+                    for row in reader:
+                        if (row["date"] == date and 
+                            row["time"] == time and 
+                            row["target_name"] == target):
+                            
+                            # Return full session details
+                            return {
+                                "session_name": row["session_name"],
+                                "ra": row["ra"],
+                                "dec": row["dec"],
+                                "total_exposure": row["total_exposure"],
+                                "gain": row["gain"],
+                                "binning": row["binning"],
+                                "filter": row["filter"],
+                                "auto_focus": row["auto_focus"],
+                                "plate_solve": row["plate_solve"],
+                                "auto_guide": row["auto_guide"],
+                                "temperature": row["temperature"],
+                                "humidity": row["humidity"],
+                                "seeing": row["seeing"],
+                                "notes": row["notes"]
+                            }
                         
             return None
             
@@ -200,28 +319,40 @@ class HistoryManager:
     def get_statistics(self) -> Dict[str, Any]:
         """Calculate and return session statistics."""
         try:
-            if not os.path.exists(self.history_file):
-                return self._empty_statistics()
+            all_records = []
+            
+            # Get list of files to process
+            if self.active_files is not None:
+                files_to_process = self.active_files
+            else:
+                history_files = self.get_history_files()
+                files_to_process = [f['filename'] for f in history_files]
+            
+            # Collect records from all active history files
+            for history_file in files_to_process:
+                file_path = os.path.join(self.history_dir, history_file)
+                if not os.path.exists(file_path):
+                    continue
+                    
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    all_records.extend(list(reader))
                 
-            with open(self.history_file, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                records = list(reader)
-                
-            if not records:
+            if not all_records:
                 return self._empty_statistics()
                 
             # Calculate basic statistics
-            total_sessions = len(records)
-            successful_sessions = len([r for r in records if r["status"] == "Completed"])
+            total_sessions = len(all_records)
+            successful_sessions = len([r for r in all_records if r["status"] == "Completed"])
             
             # Calculate total frames and exposure
-            total_frames = sum(int(r["frames_captured"] or 0) for r in records)
-            total_exposure_seconds = sum(float(r["total_exposure"] or 0) for r in records)
+            total_frames = sum(int(r["frames_captured"] or 0) for r in all_records)
+            total_exposure_seconds = sum(float(r["total_exposure"] or 0) for r in all_records)
             total_exposure_hours = total_exposure_seconds / 3600
             
             # Find most captured target
             target_counts = {}
-            for record in records:
+            for record in all_records:
                 target = record["target_name"]
                 target_counts[target] = target_counts.get(target, 0) + 1
                 
@@ -231,7 +362,7 @@ class HistoryManager:
             avg_duration_minutes = 45  # Would calculate from actual duration data
             
             # Monthly breakdown
-            monthly_stats = self._calculate_monthly_stats(records)
+            monthly_stats = self._calculate_monthly_stats(all_records)
             
             return {
                 "total_sessions": total_sessions,
@@ -304,9 +435,32 @@ class HistoryManager:
     def export_to_csv(self, filename: str):
         """Export history to a new CSV file."""
         try:
-            # Simply copy the existing file
-            import shutil
-            shutil.copy2(self.history_file, filename)
+            # Get list of files to process
+            if self.active_files is not None:
+                files_to_process = self.active_files
+            else:
+                history_files = self.get_history_files()
+                files_to_process = [f['filename'] for f in history_files]
+            
+            # Collect all records from active files
+            all_records = []
+            for history_file in files_to_process:
+                file_path = os.path.join(self.history_dir, history_file)
+                if not os.path.exists(file_path):
+                    continue
+                    
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    all_records.extend(list(reader))
+            
+            # Write to new file
+            if all_records:
+                with open(filename, 'w', newline='', encoding='utf-8') as f:
+                    fieldnames = all_records[0].keys()
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(all_records)
+                    
             self.logger.info(f"History exported to: {filename}")
             
         except Exception as e:
@@ -316,15 +470,27 @@ class HistoryManager:
     def clear_history(self):
         """Clear all history data."""
         try:
-            # Backup current file before clearing
-            backup_file = f"{self.history_file}.backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            if os.path.exists(self.history_file):
-                import shutil
-                shutil.copy2(self.history_file, backup_file)
+            # Backup all current files before clearing
+            backup_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            history_files = self.get_history_files()
+            for file_info in history_files:
+                file_path = file_info['filepath']
+                if os.path.exists(file_path):
+                    backup_file = f"{file_path}.backup_{backup_timestamp}"
+                    import shutil
+                    shutil.copy2(file_path, backup_file)
+                    # Remove the original file
+                    os.remove(file_path)
                 
-            # Reinitialize empty CSV file
-            self._initialize_csv()
-            self.logger.info("History cleared (backup created)")
+            # Reset active files to current day only
+            current_session_date = self._get_session_date()
+            current_file = f"session_history_{current_session_date}.csv"
+            self.active_files = [current_file]
+            
+            # Initialize empty CSV file for current day
+            current_file_path = self._get_history_filename(current_session_date)
+            self._initialize_csv(current_file_path)
+            self.logger.info("History cleared (backups created)")
             
         except Exception as e:
             self.logger.error(f"Failed to clear history: {e}")
@@ -333,30 +499,49 @@ class HistoryManager:
     def delete_entry(self, date: str, time: str, target: str):
         """Delete a specific history entry."""
         try:
-            if not os.path.exists(self.history_file):
-                return
-                
-            # Read all records
-            records = []
-            with open(self.history_file, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                records = [row for row in reader 
-                          if not (row["date"] == date and 
-                                 row["time"] == time and 
-                                 row["target_name"] == target)]
-                                 
-            # Write back without the deleted record
-            with open(self.history_file, 'w', newline='', encoding='utf-8') as f:
-                if records:
-                    fieldnames = records[0].keys()
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-                    writer.writerows(records)
-                else:
-                    # File is empty, reinitialize
-                    self._initialize_csv()
+            # Get list of files to process
+            if self.active_files is not None:
+                files_to_process = self.active_files
+            else:
+                history_files = self.get_history_files()
+                files_to_process = [f['filename'] for f in history_files]
+            
+            # Search through all active history files
+            for history_file in files_to_process:
+                file_path = os.path.join(self.history_dir, history_file)
+                if not os.path.exists(file_path):
+                    continue
                     
-            self.logger.info(f"Deleted history entry: {target} on {date} {time}")
+                # Read all records from this file
+                records = []
+                found_entry = False
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        if (row["date"] == date and 
+                            row["time"] == time and 
+                            row["target_name"] == target):
+                            found_entry = True
+                            # Skip this record (delete it)
+                            continue
+                        records.append(row)
+                
+                if found_entry:
+                    # Write back without the deleted record
+                    with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                        if records:
+                            fieldnames = records[0].keys()
+                            writer = csv.DictWriter(f, fieldnames=fieldnames)
+                            writer.writeheader()
+                            writer.writerows(records)
+                        else:
+                            # File is empty, reinitialize
+                            self._initialize_csv(file_path)
+                            
+                    self.logger.info(f"Deleted history entry: {target} on {date} {time}")
+                    return
+                    
+            self.logger.warning(f"History entry not found: {target} on {date} {time}")
             
         except Exception as e:
             self.logger.error(f"Failed to delete history entry: {e}")

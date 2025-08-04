@@ -300,22 +300,64 @@ class SessionsTab:
         """Create a new session."""
         self.clear_form()
         self.session_name_var.set(f"Session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        # Load default values from settings
+        self.load_default_values()
+        
+    def load_default_values(self):
+        """Load default values from settings configuration."""
+        try:
+            # Get default capture settings - use get_setting for the entire defaults section
+            frame_count = self.config_manager.get_setting("defaults", "frame_count", 50)
+            self.frame_count_var.set(str(frame_count))
+            
+            exposure_time = self.config_manager.get_setting("defaults", "exposure_time", 30)
+            self.exposure_var.set(str(exposure_time))
+            
+            gain = self.config_manager.get_setting("defaults", "gain", 100)
+            self.gain_var.set(str(gain))
+            
+            binning = self.config_manager.get_setting("defaults", "binning", "1x1")
+            self.binning_var.set(binning)
+            
+            # Set calibration defaults
+            settling_time = self.config_manager.get_setting("defaults", "settling_time", 10)
+            self.settling_time_var.set(str(settling_time))
+            
+            focus_timeout = self.config_manager.get_setting("defaults", "focus_timeout", 300)
+            self.focus_timeout_var.set(str(focus_timeout))
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to load default values: {e}")
+            # If loading defaults fails, use hardcoded fallbacks
+            self.frame_count_var.set("50")
+            self.exposure_var.set("30")
+            self.gain_var.set("100")
+            self.binning_var.set("1x1")
+            self.settling_time_var.set("10")
+            self.focus_timeout_var.set("300")
         
     def clear_form(self):
-        """Clear all form fields."""
+        """Clear all form fields and set to default values."""
+        # Clear basic info
         self.session_name_var.set("")
         self.target_name_var.set("")
         self.start_time_var.set(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         self.description_text.delete(1.0, tk.END)
+        
+        # Clear coordinates
         self.ra_var.set("")
         self.dec_var.set("")
         self.alt_var.set("")
         self.az_var.set("")
+        
+        # Set capture settings to defaults (will be overridden by load_default_values if called)
         self.frame_count_var.set("50")
         self.exposure_var.set("30")
         self.gain_var.set("100")
         self.binning_var.set("1x1")
         self.filter_var.set("None")
+        
+        # Set calibration settings to defaults (will be overridden by load_default_values if called)
         self.auto_focus_var.set(True)
         self.plate_solve_var.set(True)
         self.auto_guide_var.set(False)
@@ -331,7 +373,6 @@ class SessionsTab:
         session_data = self.get_session_data()
         try:
             self.session_manager.save_session(session_data)
-            messagebox.showinfo("Success", "Session saved successfully!")
             self.refresh_sessions()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save session: {e}")
@@ -411,7 +452,6 @@ class SessionsTab:
                 with open(filename, 'r') as f:
                     session_data = json.load(f)
                     # Load data into form (implementation similar to load_session_data)
-                    messagebox.showinfo("Success", "Session loaded successfully!")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to load session file: {e}")
                 
@@ -427,7 +467,6 @@ class SessionsTab:
             try:
                 self.session_manager.delete_session(session_name)
                 self.refresh_sessions()
-                messagebox.showinfo("Success", "Session deleted successfully!")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to delete session: {e}")
                 
@@ -444,7 +483,6 @@ class SessionsTab:
         try:
             self.session_manager.duplicate_session(session_name, new_name)
             self.refresh_sessions()
-            messagebox.showinfo("Success", "Session duplicated successfully!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to duplicate session: {e}")
             
@@ -491,7 +529,6 @@ class SessionsTab:
                 action = "added to"
             
             if success:
-                messagebox.showinfo("Success", f"Session '{session_name}' {action} schedule!")
                 # Refresh the sessions list to reflect the change
                 self.refresh_sessions()
             else:

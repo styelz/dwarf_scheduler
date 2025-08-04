@@ -6,6 +6,7 @@ import threading
 import time
 import datetime
 import logging
+import os
 from typing import Dict, Any, Optional, Callable
 from .session_manager import SessionManager
 from .dwarf_controller import DwarfController
@@ -247,11 +248,56 @@ class Scheduler:
             
     def _get_session_filename(self, session: Dict[str, Any]) -> Optional[str]:
         """Get the filename for a session."""
-        # This would need to match the session with its file
-        # For now, generate based on session data
-        timestamp = session.get("created_date", "").replace(":", "").replace("-", "")[:8]
+        # Try to reconstruct the filename from session data
+        created_date = session.get("created_date", "")
         target_name = session.get("target_name", "Unknown").replace(" ", "_")
-        return f"{timestamp}_{target_name}.json"
+        
+        if created_date:
+            # Parse the ISO format datetime and convert to filename format
+            try:
+                dt = datetime.datetime.fromisoformat(created_date.replace('Z', '+00:00'))
+                timestamp = dt.strftime("%Y%m%d_%H%M%S")
+            except:
+                # Fallback to current timestamp if parsing fails
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        else:
+            # Fallback to current timestamp
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+        # Remove any invalid filename characters from target name
+        target_name = "".join(c for c in target_name if c.isalnum() or c in "._-")
+        
+        filename = f"{timestamp}_{target_name}.json"
+        
+        # Try to find the actual file if the generated name doesn't exist
+        for status_dir in ["ToDo", "Running", "Available"]:
+            full_path = os.path.join("Sessions", status_dir, filename)
+            if os.path.exists(full_path):
+                return filename
+                
+        # If exact match not found, try to find by pattern matching
+        session_name = session.get("session_name", "")
+        session_id = session.get("session_id", "")
+        
+        for status_dir in ["ToDo", "Running", "Available"]:
+            dir_path = f"Sessions/{status_dir}"
+            if os.path.exists(dir_path):
+                for file in os.listdir(dir_path):
+                    if file.endswith('.json'):
+                        # Try to match by loading the file and comparing session data
+                        try:
+                            file_session = self.session_manager.load_session(file, dir_path)
+                            if file_session and (
+                                (session_id and file_session.get("session_id") == session_id) or
+                                (session_name and file_session.get("session_name") == session_name) or
+                                (file_session.get("target_name") == session.get("target_name") and
+                                 file_session.get("session_name") == session_name)
+                            ):
+                                return file
+                        except:
+                            continue
+        
+        return filename  # Return generated filename as fallback
         
     def _record_session_completion(self, session: Dict[str, Any], status: str, error_msg: str = ""):
         """Record session completion in history."""

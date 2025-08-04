@@ -1,19 +1,19 @@
 {
     "telescope": {
-        "ip": "192.168.4.1",
-        "port": 80,
+        "ip": "192.168.1.42",
+        "port": 9900,
         "timeout": 10,
-        "auto_connect": true,
+        "auto_connect": false,
         "camera_model": "Dwarf3",
-        "mount_type": "Alt-Az"
+        "mount_type": "Equatorial"
     },
     "location": {
         "latitude": 40.7128,
         "longitude": -74.006,
         "elevation": 10.0,
         "name": "New York, NY",
-        "timezone": "America/New_York",
-        "utc_offset": -5.0
+        "timezone": "Australia/Melbourne",
+        "utc_offset": 10.0
     },
     "defaults": {
         "frame_count": 50,

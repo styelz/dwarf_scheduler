@@ -22,6 +22,7 @@ class Scheduler:
         
         # Initialize controllers
         self.dwarf_controller = DwarfController(config_manager)
+        self.telescope_controller = self.dwarf_controller  # Alias for threaded access
         self.history_manager = HistoryManager()
         
         # Scheduler state
@@ -33,6 +34,9 @@ class Scheduler:
         # Callbacks for UI updates
         self.status_callback: Optional[Callable[[str], None]] = None
         self.session_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        
+        # Check for orphaned running sessions on startup
+        self.check_orphaned_sessions()
         
     def set_status_callback(self, callback: Callable[[str], None]):
         """Set callback function for status updates."""
@@ -403,6 +407,54 @@ class Scheduler:
         """Check if a session is currently running."""
         return self.current_session is not None
         
+    def get_telescope_status(self, timeout: int = 10) -> Dict[str, Any]:
+        """Get telescope connection status and information (with timeout)."""
+        try:
+            # Use quick status check first (non-blocking)
+            if self.dwarf_controller.connected:
+                # Return quick status for immediate response
+                quick_status = self.dwarf_controller.quick_status_check()
+                
+                # Get cached telescope info if available
+                telescope_info = self.dwarf_controller.get_telescope_info()
+                if telescope_info:
+                    quick_status.update({
+                        "model": telescope_info.get("model", "DWARF3"),
+                        "firmware_version": telescope_info.get("firmware_version", "Connected via API"),
+                        "status": telescope_info.get("status", "Connected"),
+                        "stream_type": telescope_info.get("stream_type", ""),
+                        "status_check": telescope_info.get("status_check", "Available")
+                    })
+                
+                return quick_status
+            
+            # Only attempt connection test if not already connected
+            # Use a very short timeout to prevent GUI blocking
+            elif hasattr(self.dwarf_controller, 'test_connection_sync'):
+                # Quick connection test with minimal timeout
+                try:
+                    # This should be fast and non-blocking
+                    connected = self.dwarf_controller._test_connection()
+                    if connected:
+                        return {
+                            "connected": True, 
+                            "model": "DWARF3", 
+                            "api_mode": "HTTP",
+                            "status": "Connected via HTTP",
+                            "last_update": time.time()
+                        }
+                    else:
+                        return {"connected": False, "status": "Unable to connect"}
+                except Exception as e:
+                    self.logger.debug(f"Quick connection test failed: {e}")
+                    return {"connected": False, "status": f"Connection test failed"}
+            else:
+                return {"connected": False, "status": "No connection available"}
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get telescope status: {e}")
+            return {"connected": False, "status": f"Error: {str(e)}"}
+            
     def abort_current_session(self):
         """Abort the currently running session."""
         if self.current_session:
@@ -438,6 +490,87 @@ class Scheduler:
             except Exception as e:
                 self.logger.error(f"Error disconnecting after abort: {e}")
             
-            # Restart the stop event for future sessions
-            time.sleep(1)
-            self.stop_event.clear()
+        # Restart the stop event for future sessions
+        time.sleep(1)
+        self.stop_event.clear()
+        
+    def check_orphaned_sessions(self):
+        """Check for orphaned running sessions on startup and provide recovery options."""
+        try:
+            running_sessions = self.session_manager.get_session_by_status("Running")
+            
+            if running_sessions:
+                self.logger.warning(f"Found {len(running_sessions)} orphaned running sessions from previous startup")
+                
+                for session in running_sessions:
+                    session_name = session.get("session_name", "Unknown")
+                    filename = self._get_session_filename(session)
+                    
+                    if filename:
+                        self.logger.info(f"Moving orphaned session '{session_name}' to Failed status")
+                        
+                        # Move to Failed and record in history
+                        try:
+                            self.session_manager.move_session(filename, "Running", "Failed")
+                            self._record_session_completion(
+                                session, 
+                                "Failed", 
+                                "Session interrupted - application was closed while running"
+                            )
+                        except Exception as e:
+                            self.logger.error(f"Failed to move orphaned session {session_name}: {e}")
+                
+                # Update status callback if available
+                if self.status_callback:
+                    self.status_callback(f"Recovered {len(running_sessions)} orphaned sessions")
+                    
+        except Exception as e:
+            self.logger.error(f"Error checking orphaned sessions: {e}")
+            
+    def recover_running_sessions(self, action: str = "fail"):
+        """Manually recover running sessions with specified action.
+        
+        Args:
+            action: 'fail', 'todo', or 'available' - where to move the sessions
+        """
+        try:
+            running_sessions = self.session_manager.get_session_by_status("Running")
+            
+            if not running_sessions:
+                self.logger.info("No running sessions to recover")
+                return []
+                
+            recovered = []
+            target_status = {
+                "fail": "Failed",
+                "todo": "ToDo", 
+                "available": "Available"
+            }.get(action, "Failed")
+            
+            for session in running_sessions:
+                session_name = session.get("session_name", "Unknown")
+                filename = self._get_session_filename(session)
+                
+                if filename:
+                    try:
+                        self.session_manager.move_session(filename, "Running", target_status)
+                        
+                        # Record in history if moving to Failed
+                        if target_status == "Failed":
+                            self._record_session_completion(
+                                session, 
+                                "Failed", 
+                                "Session manually recovered from orphaned state"
+                            )
+                            
+                        recovered.append(session_name)
+                        self.logger.info(f"Recovered session '{session_name}' to {target_status}")
+                        
+                    except Exception as e:
+                        self.logger.error(f"Failed to recover session {session_name}: {e}")
+                        
+            return recovered
+            
+        except Exception as e:
+            self.logger.error(f"Error recovering running sessions: {e}")
+            return []

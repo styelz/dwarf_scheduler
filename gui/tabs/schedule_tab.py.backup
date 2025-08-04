@@ -564,8 +564,8 @@ Notes:
                         self._handle_connection_result(success, message)
                     ])
                 
-                # Use threaded connection with reasonable timeout (3 retries * ~10s each = ~30s max)
-                controller.connect(timeout=10, callback=connect_callback)
+                # Use threaded connection to avoid blocking GUI
+                controller.connect(timeout=15, callback=connect_callback)
                 
         except Exception as e:
             self.add_log_message("ERROR", f"Error toggling connection: {e}")
@@ -1021,8 +1021,8 @@ Notes:
                         self._handle_connection_result(success, message)
                     ])
                 
-                # Use threaded connection with reasonable timeout (3 retries * ~10s each = ~30s max)
-                controller.connect(timeout=10, callback=connect_callback)
+                # Use threaded connection to avoid blocking GUI
+                controller.connect(timeout=15, callback=connect_callback)
                 
         except Exception as e:
             self.add_log_message("ERROR", f"Error toggling connection: {e}")

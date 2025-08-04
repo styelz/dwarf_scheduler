@@ -4,25 +4,41 @@ Enhanced with proper API flow based on dwarf_python_api implementation.
 """
 
 import requests
+import requests.exceptions
 import time
 import logging
 import threading
-from typing import Dict, Any, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, Future
+from typing import Dict, Any, Optional, Tuple, Callable
+
+# Import dwarf_python_api modules
+try:
+    from dwarf_python_api.lib.dwarf_utils import (
+        perform_goto, perform_start_autofocus, perform_stop_autofocus,
+        perform_calibration, perform_stop_calibration, perform_open_camera,
+        perform_takePhoto, perform_takeAstroPhoto, perform_stopAstroPhoto,
+        perform_waitEndAstroPhoto, perform_time, perform_disconnect,
+        perform_getstatus
+    )
+    from dwarf_python_api.lib.websockets_utils import connect_socket, disconnect_socket
+    DWARF_API_AVAILABLE = True
+except ImportError as e:
+    DWARF_API_AVAILABLE = False
+    logging.getLogger(__name__).warning(f"dwarf_python_api not available: {e}")
 
 class DwarfController:
     """Controls Dwarf3 telescope via API with enhanced session management."""
     
-    def __init__(self, config_manager):
+    def __init__(self, config_manager, force_http: bool = False):
         self.config_manager = config_manager
         self.logger = logging.getLogger(__name__)
         
-        # Connection settings
-        telescope_config = config_manager.get_telescope_settings()
-        self.ip = telescope_config.get("ip", "192.168.4.1")
-        self.port = telescope_config.get("port", 80)
-        self.timeout = telescope_config.get("timeout", 10)
+        # Connection settings - will be loaded when needed
+        self.ip = None
+        self.port = None
+        self.timeout = None
+        self.base_url = None
         
-        self.base_url = f"http://{self.ip}:{self.port}/api"
         self.connected = False
         self.session = requests.Session()
         
@@ -30,23 +46,530 @@ class DwarfController:
         self.current_session_active = False
         self.photo_session_running = False
         
-    def connect(self) -> bool:
-        """Connect to the Dwarf3 telescope."""
+        # Telescope information for status display
+        self.telescope_info = None
+        
+        # Thread pool for non-blocking operations
+        self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="DwarfAPI")
+        self._operation_lock = threading.RLock()
+        
+        # API mode - prefer dwarf_python_api if available (unless forced to HTTP)
+        self.use_dwarf_api = DWARF_API_AVAILABLE and not force_http
+        if self.use_dwarf_api:
+            self.logger.info("Using dwarf_python_api for telescope control")
+        else:
+            self.logger.info("Using HTTP-based telescope control" + (" (forced)" if force_http else ""))
+        
+        # Load initial settings
+        self._load_settings()
+    
+    def check_dwarf_python_api(self) -> bool:
+        """Check if dwarf_python_api is available."""
+        return DWARF_API_AVAILABLE
+        
+    def _load_settings(self):
+        """Load telescope settings from configuration."""
         try:
-            self.logger.info(f"Connecting to Dwarf3 at {self.base_url}")
+            # Force reload of settings from file
+            self.config_manager.settings = self.config_manager.load_settings()
             
-            # Test connection with time sync (similar to perform_time)
-            if self._perform_time_sync():
-                self.connected = True
-                self.logger.info("Successfully connected to Dwarf3")
+            telescope_config = self.config_manager.get_telescope_settings()
+            self.ip = telescope_config.get("ip", "192.168.4.1")
+            self.port = telescope_config.get("port", 80)
+            self.timeout = telescope_config.get("timeout", 10)
+            
+            self.base_url = f"http://{self.ip}:{self.port}/"
+            
+            self.logger.info(f"Loaded telescope settings: IP={self.ip}, Port={self.port}, Timeout={self.timeout}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to load telescope settings: {e}")
+            # Use defaults
+            self.ip = "192.168.4.1"
+            self.port = 80
+            self.timeout = 10
+            self.base_url = f"http://{self.ip}:{self.port}/api"
+    
+    def refresh_settings(self):
+        """Refresh telescope settings from configuration (call this when settings change)."""
+        self.logger.info("Refreshing telescope settings")
+        old_ip = self.ip
+        old_port = self.port
+        
+        self._load_settings()
+        
+        # If connection settings changed and we're connected, need to reconnect
+        if self.connected and (old_ip != self.ip or old_port != self.port):
+            self.logger.info("Connection settings changed, will reconnect on next operation")
+            self.disconnect()
+        
+    def connect(self, timeout: Optional[int] = None, callback: Optional[Callable] = None) -> Future:
+        """Connect to the Dwarf3 telescope (non-blocking)."""
+        return self.executor.submit(self._connect_sync, timeout, callback)
+    
+    def connect_sync(self, timeout: Optional[int] = None) -> bool:
+        """Connect to the Dwarf3 telescope (blocking version)."""
+        return self._connect_sync(timeout)
+    
+    def _connect_sync(self, timeout: Optional[int] = None, callback: Optional[Callable] = None) -> bool:
+        """Internal synchronous connect method."""
+        max_retries = 3
+        retry_count = 0
+        
+        try:
+            with self._operation_lock:
+                # Always refresh settings before connecting
+                self._load_settings()
+                
+                # Use provided timeout or default
+                if timeout is None:
+                    timeout = self.timeout
+                
+                self.logger.info(f"Connecting to Dwarf3 at {self.base_url} (timeout: {timeout}s, max retries: {max_retries})")
+                
+                while retry_count < max_retries:
+                    try:
+                        retry_count += 1
+                        self.logger.info(f"Connection attempt {retry_count}/{max_retries}")
+                        
+                        if self.use_dwarf_api:
+                            # Use dwarf_python_api for connection
+                            if self._connect_via_dwarf_api(timeout):
+                                self.connected = True
+                                self.logger.info("Successfully connected to Dwarf3 via dwarf_python_api")
+                                if callback:
+                                    callback(True, "Connected via dwarf_python_api")
+                                return True
+                            else:
+                                if retry_count < max_retries:
+                                    self.logger.warning(f"Connection attempt {retry_count} failed, retrying...")
+                                    time.sleep(2)  # Wait before retry
+                                    continue
+                                else:
+                                    self.logger.error("Failed to establish connection via dwarf_python_api after all retries")
+                                    if callback:
+                                        callback(False, f"Failed to connect via dwarf_python_api after {max_retries} attempts")
+                                    return False
+                        else:
+                            # Fallback to HTTP-based connection test
+                            if self._test_connection():
+                                self.connected = True
+                                self.logger.info("Successfully connected to Dwarf3 via HTTP")
+                                if callback:
+                                    callback(True, "Connected via HTTP")
+                                return True
+                            else:
+                                if retry_count < max_retries:
+                                    self.logger.warning(f"HTTP connection attempt {retry_count} failed, retrying...")
+                                    time.sleep(2)  # Wait before retry
+                                    continue
+                                else:
+                                    self.logger.error("Failed to establish HTTP connection after all retries")
+                                    if callback:
+                                        callback(False, f"Failed to connect via HTTP after {max_retries} attempts")
+                                    return False
+                                    
+                    except Exception as retry_error:
+                        self.logger.warning(f"Connection attempt {retry_count} error: {retry_error}")
+                        if retry_count < max_retries:
+                            time.sleep(2)  # Wait before retry
+                            continue
+                        else:
+                            raise retry_error
+                        
+        except Exception as e:
+            self.logger.error(f"Failed to connect to Dwarf3: {e}")
+            if callback:
+                callback(False, f"Connection error: {e}")
+            return False
+    
+    def _connect_via_dwarf_api(self, timeout: int = 10) -> bool:
+        """Connect using dwarf_python_api."""
+        try:
+            # Set up configuration for dwarf_python_api
+            self._setup_dwarf_api_config()
+            
+            # Test connection by getting status with timeout handling
+            self.logger.info(f"Testing dwarf_python_api connection (timeout: {timeout}s)...")
+            
+            # Use a shorter timeout for individual operations to prevent hanging
+            operation_timeout = min(timeout, 15)  # Cap at 15 seconds per operation
+            
+            result = self._safe_getstatus(operation_timeout)
+            
+            if result:
+                self.logger.info("dwarf_python_api connection successful")
+                # Get telescope info for status display
+                self._get_telescope_info_via_api()
                 return True
             else:
-                self.logger.error("Failed to establish proper connection")
+                # Don't consider partial data as success to avoid false positives
+                self.logger.warning("dwarf_python_api connection failed - no valid response")
                 return False
                 
         except Exception as e:
-            self.logger.error(f"Failed to connect to Dwarf3: {e}")
+            self.logger.error(f"Error connecting via dwarf_python_api: {e}")
             return False
+    
+    def _setup_dwarf_api_config(self):
+        """Set up configuration for dwarf_python_api."""
+        try:
+            import os
+            
+            # Create config.py file for dwarf_python_api
+            config_content = f'''# Configuration for dwarf_python_api
+DWARF_IP = "{self.ip}"
+DWARF_UI = "8080"  # UI port
+DWARF_ID = "{self.ip}"
+CLIENT_ID = "scheduler"
+UPDATE_CLIENT_ID = True
+TEST_CALIBRATION = False
+DEBUG = False
+TRACE = False
+LOG_FILE = "logs/dwarf_api.log"
+TIMEOUT_CMD = 30
+'''
+            
+            with open('config.py', 'w') as f:
+                f.write(config_content)
+                
+            self.logger.info(f"Created dwarf_python_api config for IP: {self.ip}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to setup dwarf_python_api config: {e}")
+    
+    def _get_telescope_info_via_api(self):
+        """Get telescope information via dwarf_python_api."""
+        try:
+            # Create enhanced telescope info with discovered data
+            self.telescope_info = {
+                "model": "DWARF3",
+                "firmware_version": "Connected via API",
+                "connected": True,
+                "last_update": time.time(),
+                "api_mode": "dwarf_python_api",
+                "stream_type": "RTSP for Tele Photo",  # From the log output
+                "status": "Successfully connected and retrieved status"
+            }
+            
+            # Try to extract more detailed info if available
+            # This would require parsing the actual status response
+            self.logger.info("Telescope status retrieved via dwarf_python_api")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get telescope info via API: {e}")
+            # Create minimal info
+            self.telescope_info = {
+                "model": "DWARF3",
+                "connected": True,
+                "api_mode": "dwarf_python_api",
+                "status": "Partial connection established"
+            }
+    
+    def _test_connection(self) -> bool:
+        """Test connection using getDefaultParamsConfig endpoint."""
+        try:
+            # Use a shorter timeout for connection testing to prevent hanging
+            test_timeout = min(self.timeout, 8)  # Cap at 8 seconds for connection test
+            
+            # Use the new endpoint for connection testing
+            url = f"http://{self.ip}:8082/getDefaultParamsConfig"
+            self.logger.debug(f"Testing connection to {url} with timeout {test_timeout}s")
+            
+            response = self.session.get(url, timeout=test_timeout)
+            
+            if response.status_code == 200:
+                data = response.json()
+                # Store telescope info for status display
+                self.telescope_info = self._extract_telescope_info(data)
+                self.logger.info("HTTP connection test successful")
+                return True
+            else:
+                self.logger.warning(f"Connection test failed with status {response.status_code}")
+                return False
+                
+        except requests.exceptions.Timeout:
+            self.logger.warning(f"Connection test timed out after {test_timeout}s")
+            return False
+        except requests.exceptions.ConnectionError:
+            self.logger.warning("Connection test failed - unable to connect to telescope")
+            return False
+        except Exception as e:
+            self.logger.error(f"Connection test failed: {e}")
+            return False
+    
+    def test_connection(self, callback: Optional[Callable] = None) -> Future:
+        """Public method to test telescope connection (non-blocking)."""
+        return self.executor.submit(self._test_connection_sync, callback)
+    
+    def test_connection_sync(self) -> bool:
+        """Public method to test telescope connection (blocking version)."""
+        return self._test_connection_sync()
+    
+    def _test_connection_sync(self, callback: Optional[Callable] = None) -> bool:
+        """Internal synchronous test connection method."""
+        max_retries = 3
+        retry_count = 0
+        
+        try:
+            with self._operation_lock:
+                while retry_count < max_retries:
+                    retry_count += 1
+                    self.logger.info(f"Connection test attempt {retry_count}/{max_retries}")
+                    
+                    result = self._test_connection()
+                    
+                    if result:
+                        if callback:
+                            callback(result)
+                        return result
+                    elif retry_count < max_retries:
+                        self.logger.warning(f"Connection test attempt {retry_count} failed, retrying...")
+                        time.sleep(1)  # Short wait before retry
+                    
+                # All retries failed
+                self.logger.error(f"Connection test failed after {max_retries} attempts")
+                if callback:
+                    callback(False)
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Connection test failed: {e}")
+            if callback:
+                callback(False)
+            return False
+    
+    def _extract_telescope_info(self, config_data: Dict) -> Dict[str, Any]:
+        """Extract useful telescope information from config data."""
+        try:
+            data = config_data.get("data", {})
+            
+            # Extract telescope model and version info
+            telescope_info = {
+                "model": data.get("name", "Unknown"),
+                "firmware_version": f"{data.get('fwMajorVersion', 0)}.{data.get('fwMinorVersion', 0)}.{data.get('fwPatchVersion', 0)}.{data.get('fwBuildVersion', 0)}",
+                "app_version": f"{data.get('majorVersion', 0)}.{data.get('minorVersion', 0)}",
+                "connected": True,
+                "last_update": time.time()
+            }
+            
+            # Extract camera information
+            cameras = data.get("cameras", [])
+            if cameras:
+                main_camera = cameras[0]  # Primary camera (Tele)
+                telescope_info.update({
+                    "camera_name": main_camera.get("name", "Unknown"),
+                    "field_of_view": f"{main_camera.get('fvWidth', 0):.2f}° x {main_camera.get('fvHeight', 0):.2f}°",
+                    "preview_resolution": f"{main_camera.get('previewWidth', 0)}x{main_camera.get('previewHeight', 0)}"
+                })
+            
+            self.logger.info(f"Telescope info extracted: {telescope_info['model']} v{telescope_info['firmware_version']}")
+            return telescope_info
+            
+        except Exception as e:
+            self.logger.error(f"Failed to extract telescope info: {e}")
+            return {
+                "model": "Unknown", 
+                "firmware_version": "Unknown",
+                "connected": True,
+                "last_update": time.time()
+            }
+    
+    def emergency_stop(self):
+        """Emergency stop all telescope operations."""
+        try:
+            self.logger.warning("Emergency stop initiated")
+            
+            if self.use_dwarf_api:
+                # Force disconnect and cleanup
+                try:
+                    perform_disconnect()
+                    # Force cleanup of any hanging threads
+                    import threading
+                    active_threads = threading.active_count()
+                    self.logger.info(f"Active threads after emergency stop: {active_threads}")
+                except Exception as e:
+                    self.logger.error(f"Error during emergency stop: {e}")
+            
+            # Reset all states
+            self.current_session_active = False
+            self.photo_session_running = False
+            self.connected = False
+            
+        except Exception as e:
+            self.logger.error(f"Error during emergency stop: {e}")
+    
+    def cleanup(self):
+        """Clean up resources and threads."""
+        try:
+            self.disconnect()
+            
+            # Shutdown thread pool
+            if hasattr(self, 'executor'):
+                self.logger.info("Shutting down thread pool...")
+                try:
+                    self.executor.shutdown(wait=False)  # Don't wait to prevent hanging
+                    self.logger.info("Thread pool shutdown initiated")
+                except Exception as e:
+                    self.logger.warning(f"Error shutting down thread pool: {e}")
+            
+            if self.use_dwarf_api:
+                # Additional cleanup for dwarf_python_api
+                try:
+                    from dwarf_python_api.lib.websockets_utils import stop_event_loop
+                    stop_event_loop()
+                    time.sleep(0.5)  # Give time for cleanup
+                except ImportError:
+                    pass  # Function might not exist in all versions
+                except Exception as e:
+                    self.logger.warning(f"Error during additional cleanup: {e}")
+            
+            self.logger.info("Controller cleanup completed")
+            
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {e}")
+            
+    def get_detailed_telescope_status(self, callback: Optional[Callable] = None) -> Future:
+        """Get detailed telescope status including runtime information (non-blocking)."""
+        return self.executor.submit(self._get_detailed_telescope_status_sync, callback)
+    
+    def get_detailed_telescope_status_sync(self) -> Dict[str, Any]:
+        """Get detailed telescope status including runtime information (blocking version)."""
+        return self._get_detailed_telescope_status_sync()
+    
+    def _get_detailed_telescope_status_sync(self, callback: Optional[Callable] = None) -> Dict[str, Any]:
+        """Internal synchronous detailed telescope status method."""
+        try:
+            with self._operation_lock:
+                status = {
+                    "connected": self.connected,
+                    "api_mode": "dwarf_python_api" if self.use_dwarf_api else "HTTP",
+                    "ip": self.ip,
+                    "last_update": time.time()
+                }
+                
+                if self.use_dwarf_api and self.connected:
+                    # Try to get current status with timeout
+                    try:
+                        result = self._safe_getstatus(timeout=30)
+                        status.update({
+                            "status_check": "Success" if result else "Partial",
+                            "real_time_data": "Available"
+                        })
+                    except Exception as e:
+                        status.update({
+                            "status_check": f"Error: {str(e)}",
+                            "real_time_data": "Limited"
+                        })
+                
+                # Merge with stored telescope info
+                if self.telescope_info:
+                    status.update(self.telescope_info)
+                
+                if callback:
+                    callback(status)
+                return status
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get detailed telescope status: {e}")
+            error_status = {
+                "connected": False,
+                "error": str(e),
+                "last_update": time.time()
+            }
+            if callback:
+                callback(error_status)
+            return error_status
+    
+    def get_telescope_status(self, timeout: int = 30, callback: Optional[Callable] = None) -> Future:
+        """Get telescope status with timeout handling (non-blocking)."""
+        return self.executor.submit(self._get_telescope_status_sync, timeout, callback)
+    
+    def get_telescope_status_sync(self, timeout: int = 30) -> Optional[Dict[str, Any]]:
+        """Get telescope status with timeout handling (blocking version)."""
+        return self._get_telescope_status_sync(timeout)
+    
+    def _get_telescope_status_sync(self, timeout: int = 30, callback: Optional[Callable] = None) -> Optional[Dict[str, Any]]:
+        """Internal synchronous telescope status method."""
+        try:
+            with self._operation_lock:
+                if self.use_dwarf_api and self.connected:
+                    result = self._safe_getstatus(timeout=timeout)
+                    if callback:
+                        callback(result)
+                    return result
+                elif self.connected:
+                    # Use HTTP fallback
+                    result = self._get_http_status()
+                    if callback:
+                        callback(result)
+                    return result
+                else:
+                    if callback:
+                        callback(None)
+                    return None
+        except Exception as e:
+            self.logger.error(f"Failed to get telescope status: {e}")
+            if callback:
+                callback(None)
+            return None
+    
+    def _safe_getstatus(self, timeout: int = 30) -> Optional[Dict[str, Any]]:
+        """Safely call perform_getstatus with timeout handling."""
+        try:
+            import signal
+            import threading
+            
+            result = None
+            exception = None
+            
+            def target():
+                nonlocal result, exception
+                try:
+                    # Add a safety timeout for the actual API call
+                    result = perform_getstatus()
+                except Exception as e:
+                    exception = e
+            
+            # Run in thread with timeout
+            thread = threading.Thread(target=target)
+            thread.daemon = True
+            thread.start()
+            thread.join(timeout)
+            
+            if thread.is_alive():
+                self.logger.warning(f"perform_getstatus timed out after {timeout}s")
+                # Don't return cached info on timeout - it's misleading
+                return None
+            
+            if exception:
+                self.logger.error(f"perform_getstatus failed: {exception}")
+                return None
+                
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error in safe getstatus: {e}")
+            return None
+    
+    def _get_http_status(self) -> Optional[Dict[str, Any]]:
+        """Get status using HTTP fallback."""
+        try:
+            config_data = self.get_config_data()
+            if config_data:
+                return {
+                    "mode": "HTTP",
+                    "config_params": len(config_data),
+                    "status": "Connected"
+                }
+            return None
+        except Exception as e:
+            self.logger.error(f"HTTP status check failed: {e}")
+            return None
+    
+    def get_telescope_info(self) -> Optional[Dict[str, Any]]:
+        """Get current telescope information."""
+        return getattr(self, 'telescope_info', None)
     
     def _perform_time_sync(self) -> bool:
         """Perform time synchronization with telescope."""
@@ -93,14 +616,26 @@ class DwarfController:
             if self.current_session_active:
                 self._stop_current_session()
             
-            result = self._make_request("POST", "/go_live", {})
-            if result:
-                self.current_session_active = True
-                self.logger.info("Imaging session started successfully")
-                return True
+            if self.use_dwarf_api:
+                # Use dwarf_python_api to open camera
+                result = perform_open_camera()
+                if result:
+                    self.current_session_active = True
+                    self.logger.info("Imaging session started successfully via dwarf_python_api")
+                    return True
+                else:
+                    self.logger.error("Failed to start imaging session via dwarf_python_api")
+                    return False
             else:
-                self.logger.error("Failed to start imaging session")
-                return False
+                # Fallback to HTTP request
+                result = self._make_request("POST", "/go_live", {})
+                if result:
+                    self.current_session_active = True
+                    self.logger.info("Imaging session started successfully via HTTP")
+                    return True
+                else:
+                    self.logger.error("Failed to start imaging session via HTTP")
+                    return False
                 
         except Exception as e:
             self.logger.error(f"Error starting session: {e}")
@@ -116,27 +651,60 @@ class DwarfController:
         except Exception as e:
             self.logger.error(f"Error stopping session: {e}")
     
-    def auto_focus(self, infinite_focus: bool = False, stop_event: threading.Event = None) -> bool:
-        """Perform auto focus operation."""
+    def auto_focus(self, infinite_focus: bool = False, stop_event: threading.Event = None, callback: Optional[Callable] = None) -> Future:
+        """Perform auto focus operation (non-blocking)."""
+        return self.executor.submit(self._auto_focus_sync, infinite_focus, stop_event, callback)
+    
+    def auto_focus_sync(self, infinite_focus: bool = False, stop_event: threading.Event = None) -> bool:
+        """Perform auto focus operation (blocking version)."""
+        return self._auto_focus_sync(infinite_focus, stop_event)
+    
+    def _auto_focus_sync(self, infinite_focus: bool = False, stop_event: threading.Event = None, callback: Optional[Callable] = None) -> bool:
+        """Internal synchronous auto focus method."""
         try:
-            focus_type = "infinite" if infinite_focus else "automatic"
-            self.logger.info(f"Starting {focus_type} auto focus")
-            
-            if stop_event and stop_event.is_set():
-                return False
-            
-            result = self._make_request("POST", "/autofocus", {
-                "infinite": infinite_focus
-            })
-            
-            if result:
-                # Wait for autofocus to complete
-                return self._wait_for_autofocus_completion(stop_event)
-            else:
-                return False
+            with self._operation_lock:
+                focus_type = "infinite" if infinite_focus else "automatic"
+                self.logger.info(f"Starting {focus_type} auto focus")
                 
+                if stop_event and stop_event.is_set():
+                    if callback:
+                        callback(False, "Operation cancelled")
+                    return False
+                
+                if self.use_dwarf_api:
+                    # Use dwarf_python_api for autofocus
+                    result = perform_start_autofocus(infinite=infinite_focus)
+                    if result:
+                        self.logger.info(f"{focus_type} auto focus completed successfully via dwarf_python_api")
+                        if callback:
+                            callback(True, f"{focus_type} focus completed")
+                        return True
+                    else:
+                        self.logger.error(f"{focus_type} auto focus failed via dwarf_python_api")
+                        if callback:
+                            callback(False, f"{focus_type} focus failed")
+                        return False
+                else:
+                    # Fallback to HTTP request
+                    result = self._make_request("POST", "/autofocus", {
+                        "infinite": infinite_focus
+                    })
+                    
+                    if result:
+                        # Wait for autofocus to complete
+                        success = self._wait_for_autofocus_completion(stop_event)
+                        if callback:
+                            callback(success, f"{focus_type} focus completed" if success else f"{focus_type} focus failed")
+                        return success
+                    else:
+                        if callback:
+                            callback(False, f"{focus_type} focus request failed")
+                        return False
+                        
         except Exception as e:
             self.logger.error(f"Auto focus failed: {e}")
+            if callback:
+                callback(False, f"Auto focus error: {e}")
             return False
     
     def _wait_for_autofocus_completion(self, stop_event: threading.Event = None, timeout: int = 60) -> bool:
@@ -209,35 +777,77 @@ class DwarfController:
         self.logger.error("Polar alignment timeout")
         return False
     
-    def perform_calibration(self, stop_event: threading.Event = None) -> bool:
-        """Perform telescope calibration."""
+    def perform_calibration(self, stop_event: threading.Event = None, callback: Optional[Callable] = None) -> Future:
+        """Perform telescope calibration (non-blocking)."""
+        return self.executor.submit(self._perform_calibration_sync, stop_event, callback)
+    
+    def perform_calibration_sync(self, stop_event: threading.Event = None) -> bool:
+        """Perform telescope calibration (blocking version)."""
+        return self._perform_calibration_sync(stop_event)
+    
+    def _perform_calibration_sync(self, stop_event: threading.Event = None, callback: Optional[Callable] = None) -> bool:
+        """Internal synchronous calibration method."""
         try:
-            self.logger.info("Starting telescope calibration")
-            
-            # Set calibration camera settings
-            if not self._set_calibration_settings(stop_event):
-                return False
-            
-            if stop_event and stop_event.is_set():
-                return False
-            
-            # Stop goto before calibration
-            self._make_request("POST", "/stop_goto", {})
-            time.sleep(5)
-            
-            if stop_event and stop_event.is_set():
-                return False
-            
-            # Start calibration
-            result = self._make_request("POST", "/calibration", {})
-            
-            if result:
-                return self._wait_for_calibration_completion(stop_event)
-            else:
-                return False
+            with self._operation_lock:
+                self.logger.info("Starting telescope calibration")
                 
+                if stop_event and stop_event.is_set():
+                    if callback:
+                        callback(False, "Operation cancelled")
+                    return False
+                
+                if self.use_dwarf_api:
+                    # Use dwarf_python_api for calibration
+                    result = perform_calibration()
+                    if result:
+                        self.logger.info("Telescope calibration completed successfully via dwarf_python_api")
+                        if callback:
+                            callback(True, "Calibration completed successfully")
+                        return True
+                    else:
+                        self.logger.error("Telescope calibration failed via dwarf_python_api")
+                        if callback:
+                            callback(False, "Calibration failed")
+                        return False
+                else:
+                    # Fallback to HTTP-based calibration
+                    # Set calibration camera settings
+                    if not self._set_calibration_settings(stop_event):
+                        if callback:
+                            callback(False, "Failed to set calibration settings")
+                        return False
+                    
+                    if stop_event and stop_event.is_set():
+                        if callback:
+                            callback(False, "Operation cancelled")
+                        return False
+                    
+                    # Stop goto before calibration
+                    self._make_request("POST", "/stop_goto", {})
+                    time.sleep(5)
+                    
+                    if stop_event and stop_event.is_set():
+                        if callback:
+                            callback(False, "Operation cancelled")
+                        return False
+                    
+                    # Start calibration
+                    result = self._make_request("POST", "/calibration", {})
+                    
+                    if result:
+                        success = self._wait_for_calibration_completion(stop_event)
+                        if callback:
+                            callback(success, "Calibration completed" if success else "Calibration failed")
+                        return success
+                    else:
+                        if callback:
+                            callback(False, "Calibration request failed")
+                        return False
+                        
         except Exception as e:
             self.logger.error(f"Calibration failed: {e}")
+            if callback:
+                callback(False, f"Calibration error: {e}")
             return False
     
     def _set_calibration_settings(self, stop_event: threading.Event = None) -> bool:
@@ -318,27 +928,60 @@ class DwarfController:
         self.logger.error("Calibration timeout")
         return False
     
-    def goto_coordinates(self, ra: float, dec: float, target_name: str = "", stop_event: threading.Event = None) -> bool:
-        """Move telescope to specified coordinates."""
+    def goto_coordinates(self, ra: float, dec: float, target_name: str = "", stop_event: threading.Event = None, callback: Optional[Callable] = None) -> Future:
+        """Move telescope to specified coordinates (non-blocking)."""
+        return self.executor.submit(self._goto_coordinates_sync, ra, dec, target_name, stop_event, callback)
+    
+    def goto_coordinates_sync(self, ra: float, dec: float, target_name: str = "", stop_event: threading.Event = None) -> bool:
+        """Move telescope to specified coordinates (blocking version)."""
+        return self._goto_coordinates_sync(ra, dec, target_name, stop_event)
+    
+    def _goto_coordinates_sync(self, ra: float, dec: float, target_name: str = "", stop_event: threading.Event = None, callback: Optional[Callable] = None) -> bool:
+        """Internal synchronous goto coordinates method."""
         try:
-            self.logger.info(f"Moving to coordinates RA: {ra}, DEC: {dec} (Target: {target_name})")
-            
-            if stop_event and stop_event.is_set():
-                return False
-            
-            result = self._make_request("POST", "/goto", {
-                "ra": ra,
-                "dec": dec,
-                "target_name": target_name or "Unknown"
-            })
-            
-            if result:
-                return self._wait_for_goto_completion(stop_event)
-            else:
-                return False
+            with self._operation_lock:
+                self.logger.info(f"Moving to coordinates RA: {ra}, DEC: {dec} (Target: {target_name})")
                 
+                if stop_event and stop_event.is_set():
+                    if callback:
+                        callback(False, "Operation cancelled")
+                    return False
+                
+                if self.use_dwarf_api:
+                    # Use dwarf_python_api for goto
+                    result = perform_goto(ra, dec, target_name or "Unknown")
+                    if result:
+                        self.logger.info(f"Goto coordinates completed successfully via dwarf_python_api")
+                        if callback:
+                            callback(True, "Goto completed successfully")
+                        return True
+                    else:
+                        self.logger.error(f"Goto coordinates failed via dwarf_python_api")
+                        if callback:
+                            callback(False, "Goto failed via API")
+                        return False
+                else:
+                    # Fallback to HTTP request
+                    result = self._make_request("POST", "/goto", {
+                        "ra": ra,
+                        "dec": dec,
+                        "target_name": target_name or "Unknown"
+                    })
+                    
+                    if result:
+                        success = self._wait_for_goto_completion(stop_event)
+                        if callback:
+                            callback(success, "Goto completed" if success else "Goto failed")
+                        return success
+                    else:
+                        if callback:
+                            callback(False, "Goto request failed")
+                        return False
+                        
         except Exception as e:
             self.logger.error(f"Goto coordinates failed: {e}")
+            if callback:
+                callback(False, f"Goto error: {e}")
             return False
     
     def _wait_for_goto_completion(self, stop_event: threading.Event = None, timeout: int = 120) -> bool:
@@ -599,17 +1242,40 @@ class DwarfController:
             if self.photo_session_running:
                 self._stop_capture_session()
             
-            # Close connection
+            if self.use_dwarf_api:
+                # Disconnect using dwarf_python_api with proper cleanup
+                try:
+                    perform_disconnect()
+                    # Give time for the websocket to close properly
+                    time.sleep(1)
+                    self.logger.info("Disconnected from Dwarf3 via dwarf_python_api")
+                except Exception as api_error:
+                    self.logger.warning(f"Error during dwarf_python_api disconnect: {api_error}")
+            else:
+                # Close HTTP session
+                self.session.close()
+                self.logger.info("Disconnected from Dwarf3 via HTTP")
+            
+            # Reset connection state
             self.connected = False
-            self.session.close()
-            self.logger.info("Disconnected from Dwarf3")
             
         except Exception as e:
             self.logger.error(f"Error during disconnect: {e}")
     
     def is_connected(self) -> bool:
-        """Check if connected to telescope."""
+        """Check if connected to telescope (non-blocking check)."""
         return self.connected
+    
+    def quick_status_check(self) -> Dict[str, Any]:
+        """Get quick status without blocking operations."""
+        return {
+            "connected": self.connected,
+            "api_mode": "dwarf_python_api" if self.use_dwarf_api else "HTTP",
+            "ip": self.ip,
+            "session_active": self.current_session_active,
+            "photo_running": self.photo_session_running,
+            "last_update": time.time()
+        }
     
     def get_status(self) -> Dict[str, Any]:
         """Get current telescope status."""

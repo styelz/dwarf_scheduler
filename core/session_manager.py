@@ -309,3 +309,12 @@ class SessionManager:
                             
         except Exception as e:
             self.logger.error(f"Failed to cleanup old sessions: {e}")
+            
+    def get_running_sessions_count(self) -> int:
+        """Get count of sessions currently in Running status."""
+        try:
+            running_sessions = self.get_session_by_status("Running")
+            return len(running_sessions)
+        except Exception as e:
+            self.logger.error(f"Failed to get running sessions count: {e}")
+            return 0

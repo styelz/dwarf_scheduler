@@ -14,8 +14,79 @@ class SettingsTab:
         self.config_manager = config_manager
         self.logger = logging.getLogger(__name__)
         
+        # Reference to scheduler will be set by main window
+        self.scheduler = None
+        
+        # Auto-save debounce timer
+        self.auto_save_timer = None
+        self.auto_save_delay = 1000  # 1 second delay in milliseconds
+        
         self.create_widgets()
         self.load_settings()
+        self.setup_auto_save_callbacks()
+        
+    def set_scheduler_reference(self, scheduler):
+        """Set reference to scheduler for settings updates."""
+        self.scheduler = scheduler
+    
+    def setup_auto_save_callbacks(self):
+        """Setup auto-save callbacks for all settings widgets."""
+        # Get all StringVar, IntVar, BooleanVar, DoubleVar instances
+        vars_to_watch = []
+        
+        # Telescope settings
+        vars_to_watch.extend([
+            self.dwarf_ip_var, self.port_var, self.timeout_var,
+            self.auto_connect_var, self.camera_model_var, self.mount_type_var
+        ])
+        
+        # Location settings
+        vars_to_watch.extend([
+            self.latitude_var, self.longitude_var, self.elevation_var,
+            self.location_name_var, self.timezone_var, self.utc_offset_var
+        ])
+        
+        # Default settings
+        vars_to_watch.extend([
+            self.default_frames_var, self.default_exposure_var, self.default_gain_var,
+            self.default_binning_var, self.session_wait_var, self.default_settling_var,
+            self.default_focus_timeout_var
+        ])
+        
+        # Advanced settings
+        vars_to_watch.extend([
+            self.log_level_var, self.log_to_file_var, self.auto_archive_var,
+            self.archive_days_var, self.auto_backup_var, self.backup_location_var
+        ])
+        
+        # History settings
+        vars_to_watch.append(self.day_change_hour_var)
+        
+        # Add trace callbacks to all variables
+        for var in vars_to_watch:
+            if hasattr(var, 'trace_add'):  # Modern tkinter
+                var.trace_add('write', self.on_setting_changed)
+            else:  # Older tkinter
+                var.trace('w', self.on_setting_changed)
+    
+    def on_setting_changed(self, *args):
+        """Called when any setting changes - triggers debounced auto-save."""
+        # Cancel existing timer if it exists
+        if self.auto_save_timer:
+            self.parent.after_cancel(self.auto_save_timer)
+        
+        # Schedule new auto-save
+        self.auto_save_timer = self.parent.after(self.auto_save_delay, self.auto_save_settings)
+    
+    def auto_save_settings(self):
+        """Automatically save settings (debounced version)."""
+        try:
+            self.save_settings_internal()
+            self.logger.debug("Settings auto-saved")
+        except Exception as e:
+            self.logger.error(f"Auto-save failed: {e}")
+        finally:
+            self.auto_save_timer = None
         
     def create_widgets(self):
         """Create and layout widgets for the settings tab."""
@@ -45,21 +116,23 @@ class SettingsTab:
         settings_notebook.add(advanced_frame, text="Advanced")
         self.create_advanced_settings(advanced_frame)
         
-        # Save/Reset buttons
+        # Reset button only (settings are auto-saved)
         button_frame = ttk.Frame(self.frame)
         button_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Button(
-            button_frame, 
-            text="Save Settings", 
-            command=self.save_settings
-        ).pack(side=tk.LEFT, padx=(0, 5))
         
         ttk.Button(
             button_frame, 
             text="Reset to Defaults", 
             command=self.reset_defaults
         ).pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Auto-save indicator
+        self.auto_save_label = ttk.Label(
+            button_frame, 
+            text="Settings are automatically saved",
+            foreground="gray"
+        )
+        self.auto_save_label.pack(side=tk.RIGHT, padx=(5, 0))
         
         ttk.Button(
             button_frame, 
@@ -356,8 +429,8 @@ class SettingsTab:
         history = config.get("history", {})
         self.day_change_hour_var.set(str(history.get("day_change_hour", 18)))
         
-    def save_settings(self):
-        """Save current settings to configuration."""
+    def save_settings_internal(self):
+        """Internal method to save settings without user dialogs."""
         try:
             config = {
                 "telescope": {
@@ -399,19 +472,28 @@ class SettingsTab:
             }
             
             self.config_manager.save_settings(config)
-            self.logger.info("Settings saved")
             
-        except ValueError as e:
-            messagebox.showerror("Error", f"Invalid input value: {e}")
+            # Refresh scheduler settings if available
+            if self.scheduler and hasattr(self.scheduler, 'dwarf_controller'):
+                try:
+                    self.scheduler.dwarf_controller.refresh_settings()
+                    self.logger.debug("Scheduler settings refreshed")
+                except Exception as e:
+                    self.logger.error(f"Failed to refresh scheduler settings: {e}")
+            
+            return True
+            
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save settings: {e}")
             self.logger.error(f"Failed to save settings: {e}")
+            return False
             
     def reset_defaults(self):
         """Reset all settings to defaults."""
         if messagebox.askyesno("Confirm Reset", "Reset all settings to defaults?"):
             self.config_manager.reset_to_defaults()
             self.load_settings()
+            # Auto-save the reset values
+            self.auto_save_settings()
             
     def test_connection(self):
         """Test connection to telescope."""

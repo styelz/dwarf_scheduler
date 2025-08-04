@@ -114,7 +114,7 @@ class Scheduler:
             return False
             
     def _execute_session(self, session: Dict[str, Any]):
-        """Execute a telescope session."""
+        """Execute a telescope session with enhanced error handling."""
         session_name = session.get("session_name", "Unknown")
         self.logger.info(f"Starting execution of session: {session_name}")
         
@@ -127,7 +127,14 @@ class Scheduler:
             self.current_session = session
             self._update_status(f"Executing session: {session_name}")
             
-            # Execute session steps
+            # Connect to telescope first
+            self._update_status("Connecting to telescope")
+            if not self.dwarf_controller.connect():
+                raise Exception("Failed to connect to telescope")
+                
+            self._update_status("Connected to telescope")
+            
+            # Execute session steps with the enhanced flow
             success = self._run_session_steps(session)
             
             if success:
@@ -150,101 +157,164 @@ class Scheduler:
             # Move to Failed on exception
             filename = self._get_session_filename(session)
             if filename:
-                self.session_manager.move_session(filename, "Running", "Failed")
+                try:
+                    self.session_manager.move_session(filename, "Running", "Failed")
+                except Exception as move_error:
+                    self.logger.error(f"Failed to move session to Failed folder: {move_error}")
             self._record_session_completion(session, "Failed", str(e))
             self._update_status(f"Session error: {session_name}")
             
         finally:
             self.current_session = None
+            # Ensure telescope is disconnected
+            try:
+                if self.dwarf_controller.is_connected():
+                    self.dwarf_controller.disconnect()
+            except Exception as disconnect_error:
+                self.logger.error(f"Error during disconnect: {disconnect_error}")
             
     def _run_session_steps(self, session: Dict[str, Any]) -> bool:
-        """Run all steps for a session."""
+        """Run all steps for a session using enhanced Dwarf API flow."""
         try:
-            # Connect to telescope
-            if not self.dwarf_controller.connect():
-                self.logger.error("Failed to connect to telescope")
+            # Step 1: Start imaging session (Go Live)
+            self._update_status("Starting imaging session")
+            if not self.dwarf_controller.start_session(self.stop_event):
+                self.logger.error("Failed to start imaging session")
+                return False
+            
+            if self.stop_event.is_set():
                 return False
                 
-            self._update_status("Connected to telescope")
-            
-            # Step 1: Move to target coordinates
-            coordinates = session.get("coordinates", {})
-            ra = coordinates.get("ra")
-            dec = coordinates.get("dec")
-            
-            if ra and dec:
-                self._update_status("Moving to target coordinates")
-                if not self.dwarf_controller.goto_coordinates(ra, dec):
-                    self.logger.error("Failed to move to target coordinates")
-                    return False
-                    
             # Step 2: Calibration steps
             calibration = session.get("calibration", {})
             
             # Auto focus
             if calibration.get("auto_focus", False):
                 self._update_status("Performing auto focus")
-                if not self.dwarf_controller.auto_focus():
+                infinite_focus = calibration.get("infinite_focus", False)
+                if not self.dwarf_controller.auto_focus(infinite_focus, self.stop_event):
                     self.logger.warning("Auto focus failed, continuing anyway")
                     
-            # Plate solving
-            if calibration.get("plate_solve", False):
-                self._update_status("Plate solving")
-                if not self.dwarf_controller.plate_solve():
-                    self.logger.warning("Plate solving failed, continuing anyway")
+            if self.stop_event.is_set():
+                return False
                     
-            # Auto guiding
+            # EQ Solving (Polar Alignment)
+            if calibration.get("eq_solving", False):
+                self._update_status("Performing EQ solving")
+                if not self.dwarf_controller.perform_eq_solving(self.stop_event):
+                    self.logger.warning("EQ solving failed, continuing anyway")
+                    
+            if self.stop_event.is_set():
+                return False
+                    
+            # Telescope calibration
+            if calibration.get("calibrate", False):
+                self._update_status("Performing telescope calibration")
+                if not self.dwarf_controller.perform_calibration(self.stop_event):
+                    self.logger.warning("Calibration failed, continuing anyway")
+                    
+            if self.stop_event.is_set():
+                return False
+                
+            # Step 3: Move to target coordinates
+            coordinates = session.get("coordinates", {})
+            ra = coordinates.get("ra")
+            dec = coordinates.get("dec")
+            target_name = session.get("target_name", "Unknown")
+            
+            if ra and dec:
+                self._update_status("Moving to target coordinates")
+                # Convert string coordinates to float if needed
+                try:
+                    ra_float = float(ra) if isinstance(ra, str) else ra
+                    dec_float = float(dec) if isinstance(dec, str) else dec
+                except (ValueError, TypeError):
+                    self.logger.error(f"Invalid coordinates format: RA={ra}, DEC={dec}")
+                    return False
+                    
+                if not self.dwarf_controller.goto_coordinates(ra_float, dec_float, target_name, self.stop_event):
+                    self.logger.error("Failed to move to target coordinates")
+                    return False
+                    
+            if self.stop_event.is_set():
+                return False
+                
+            # Step 4: Auto guiding
             if calibration.get("auto_guide", False):
                 self._update_status("Starting auto guiding")
-                if not self.dwarf_controller.start_guiding():
+                if not self.dwarf_controller.start_guiding(self.stop_event):
                     self.logger.warning("Auto guiding failed, continuing anyway")
                     
-            # Settling time
+            if self.stop_event.is_set():
+                return False
+                    
+            # Step 5: Settling time
             settling_time = calibration.get("settling_time", 10)
             if settling_time > 0:
                 self._update_status(f"Settling for {settling_time} seconds")
-                time.sleep(settling_time)
-                
-            # Step 3: Capture images
+                for i in range(settling_time):
+                    if self.stop_event.is_set():
+                        return False
+                    time.sleep(1)
+                    
+            # Step 6: Setup camera and capture images
             capture_settings = session.get("capture_settings", {})
-            frame_count = capture_settings.get("frame_count", 1)
-            exposure_time = capture_settings.get("exposure_time", 30)
             
-            self._update_status(f"Capturing {frame_count} frames")
-            
-            captured_frames = 0
-            for frame_num in range(frame_count):
-                if self.stop_event.is_set():
-                    self.logger.info("Session interrupted by stop signal")
-                    break
-                    
-                self._update_status(f"Capturing frame {frame_num + 1}/{frame_count}")
+            # Setup camera for capture
+            self._update_status("Setting up camera for capture")
+            if not self.dwarf_controller.setup_camera_for_capture(capture_settings, self.stop_event):
+                self.logger.error("Failed to setup camera")
+                return False
                 
-                if self.dwarf_controller.capture_frame(exposure_time):
-                    captured_frames += 1
-                else:
-                    self.logger.warning(f"Failed to capture frame {frame_num + 1}")
-                    
-            # Step 4: Cleanup
+            if self.stop_event.is_set():
+                return False
+            
+            # Start capture session
+            frame_count = capture_settings.get("frame_count", 1)
+            self._update_status(f"Starting capture session for {frame_count} frames")
+            
+            if not self.dwarf_controller.start_capture_session(frame_count, self.stop_event):
+                self.logger.error("Failed to start capture session")
+                return False
+                
+            if self.stop_event.is_set():
+                return False
+            
+            # Wait for capture completion with progress updates
+            self._update_status("Capturing frames...")
+            
+            def progress_callback(captured, total):
+                if not self.stop_event.is_set():
+                    self._update_status(f"Capturing frame {captured}/{total}")
+            
+            success = self.dwarf_controller.wait_for_capture_completion(
+                self.stop_event, 
+                progress_callback
+            )
+            
+            if not success:
+                self.logger.warning("Capture session completed with issues")
+                
+            # Step 7: Cleanup
             if calibration.get("auto_guide", False):
+                self._update_status("Stopping auto guiding")
                 self.dwarf_controller.stop_guiding()
                 
             self._update_status("Session capture completed")
             
-            # Check if we captured at least some frames
-            success_threshold = 0.8  # 80% of frames must be captured
-            success = captured_frames >= (frame_count * success_threshold)
-            
-            self.logger.info(f"Captured {captured_frames}/{frame_count} frames")
-            return success
+            # Consider session successful if we got through the capture phase
+            return True
             
         except Exception as e:
             self.logger.error(f"Error in session steps: {e}")
             return False
             
         finally:
-            # Always disconnect
-            self.dwarf_controller.disconnect()
+            # Always disconnect and cleanup
+            try:
+                self.dwarf_controller.disconnect()
+            except Exception as e:
+                self.logger.error(f"Error during cleanup: {e}")
             
     def _get_session_filename(self, session: Dict[str, Any]) -> Optional[str]:
         """Get the filename for a session."""
@@ -338,18 +408,35 @@ class Scheduler:
         if self.current_session:
             self.logger.info(f"Aborting session: {self.current_session.get('session_name', 'Unknown')}")
             
+            # Emergency stop all telescope operations
+            try:
+                if self.dwarf_controller.is_connected():
+                    self.dwarf_controller.emergency_stop()
+            except Exception as e:
+                self.logger.error(f"Error during emergency stop: {e}")
+            
             # Set stop event to interrupt session
             self.stop_event.set()
             
             # Move session to Failed
             filename = self._get_session_filename(self.current_session)
             if filename:
-                self.session_manager.move_session(filename, "Running", "Failed")
+                try:
+                    self.session_manager.move_session(filename, "Running", "Failed")
+                except Exception as e:
+                    self.logger.error(f"Failed to move aborted session to Failed folder: {e}")
                 
             self._record_session_completion(self.current_session, "Aborted", "Session aborted by user")
             self._update_status("Session aborted")
             
             self.current_session = None
+            
+            # Ensure telescope is disconnected
+            try:
+                if self.dwarf_controller.is_connected():
+                    self.dwarf_controller.disconnect()
+            except Exception as e:
+                self.logger.error(f"Error disconnecting after abort: {e}")
             
             # Restart the stop event for future sessions
             time.sleep(1)

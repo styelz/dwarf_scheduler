@@ -155,15 +155,17 @@ class Scheduler:
             self.current_session = session
             self._update_status(f"Executing session: {session_name}")
             
-            # Connect to telescope first
+            # Connect to telescope first (or verify existing connection)
             self._update_status("Connecting to telescope")
-            if not self.dwarf_controller.connect():
-                # Check if SLAVE MODE was detected
-                if self.dwarf_controller.is_slave_mode_detected():
-                    raise Exception("Telescope is in SLAVE MODE - being used by another application")
-                else:
-                    raise Exception("Failed to connect to telescope")
-                
+            if not self.dwarf_controller.is_connected():
+                # Need to establish new connection
+                if not self.dwarf_controller.connect():
+                    # Check if SLAVE MODE was detected
+                    if self.dwarf_controller.is_slave_mode_detected():
+                        raise Exception("Telescope is in SLAVE MODE - being used by another application")
+                    else:
+                        raise Exception("Failed to connect to telescope")
+            
             self._update_status("Connected to telescope")
             
             # Execute session steps with the enhanced flow

@@ -37,7 +37,8 @@ class SettingsTab:
         # Telescope settings
         vars_to_watch.extend([
             self.dwarf_ip_var, self.port_var, self.timeout_var,
-            self.auto_connect_var, self.camera_model_var, self.mount_type_var
+            self.auto_connect_var, self.camera_model_var, self.mount_type_var,
+            self.stellarium_ip_var, self.stellarium_port_var
         ])
         
         # Location settings
@@ -92,31 +93,48 @@ class SettingsTab:
         """Create and layout widgets for the settings tab."""
         self.frame = ttk.Frame(self.parent)
         
-        # Create notebook for different setting categories
-        settings_notebook = ttk.Notebook(self.frame)
-        settings_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Create a canvas and scrollbar for scrollable content
+        canvas = tk.Canvas(self.frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
         
-        # Telescope Connection tab
-        telescope_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(telescope_frame, text="Telescope")
-        self.create_telescope_settings(telescope_frame)
+        # Configure scrollable frame
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
         
-        # Location tab
-        location_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(location_frame, text="Location")
-        self.create_location_settings(location_frame)
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
         
-        # Defaults tab
-        defaults_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(defaults_frame, text="Defaults")
-        self.create_default_settings(defaults_frame)
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True, padx=(5, 0), pady=5)
+        scrollbar.pack(side="right", fill="y", pady=5)
         
-        # Advanced tab
-        advanced_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(advanced_frame, text="Advanced")
-        self.create_advanced_settings(advanced_frame)
+        # Bind mousewheel to canvas
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
         
-        # Reset button only (settings are auto-saved)
+        # Create main container with two columns
+        main_container = ttk.Frame(scrollable_frame)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Left column
+        left_column = ttk.Frame(main_container)
+        left_column.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        
+        # Right column
+        right_column = ttk.Frame(main_container)
+        right_column.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        
+        # Distribute settings across two columns
+        self.create_telescope_settings(left_column)
+        self.create_location_settings(left_column)
+        self.create_default_settings(right_column)
+        self.create_advanced_settings(right_column)
+        
+        # Only Reset button at the bottom of the main frame (not scrollable)
         button_frame = ttk.Frame(self.frame)
         button_frame.pack(fill=tk.X, padx=5, pady=5)
         
@@ -124,26 +142,13 @@ class SettingsTab:
             button_frame, 
             text="Reset to Defaults", 
             command=self.reset_defaults
-        ).pack(side=tk.LEFT, padx=(0, 5))
-        
-        # Auto-save indicator
-        self.auto_save_label = ttk.Label(
-            button_frame, 
-            text="Settings are automatically saved",
-            foreground="gray"
-        )
-        self.auto_save_label.pack(side=tk.RIGHT, padx=(5, 0))
-        
-        ttk.Button(
-            button_frame, 
-            text="Test Connection", 
-            command=self.test_connection
-        ).pack(side=tk.RIGHT)
+        ).pack(side=tk.LEFT)
         
     def create_telescope_settings(self, parent):
         """Create telescope connection settings."""
-        main_frame = ttk.Frame(parent)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Telescope section header
+        main_frame = ttk.LabelFrame(parent, text="Telescope Settings", padding=15)
+        main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Connection settings
         conn_frame = ttk.LabelFrame(main_frame, text="Connection Settings", padding=10)
@@ -173,9 +178,23 @@ class SettingsTab:
             variable=self.auto_connect_var
         ).grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=5)
         
+        # Stellarium settings
+        stellarium_frame = ttk.LabelFrame(main_frame, text="Stellarium Remote", padding=10)
+        stellarium_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        # Stellarium IP Address
+        ttk.Label(stellarium_frame, text="Stellarium IP:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.stellarium_ip_var = tk.StringVar(value="127.0.0.1")
+        ttk.Entry(stellarium_frame, textvariable=self.stellarium_ip_var, width=20).grid(row=0, column=1, sticky=tk.W, pady=2)
+        
+        # Stellarium Port
+        ttk.Label(stellarium_frame, text="Stellarium Port:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.stellarium_port_var = tk.StringVar(value="8090")
+        ttk.Entry(stellarium_frame, textvariable=self.stellarium_port_var, width=10).grid(row=1, column=1, sticky=tk.W, pady=2)
+        
         # Device settings
         device_frame = ttk.LabelFrame(main_frame, text="Device Settings", padding=10)
-        device_frame.pack(fill=tk.X, pady=(0, 10))
+        device_frame.pack(fill=tk.X)
         
         # Camera settings
         ttk.Label(device_frame, text="Camera Model:").grid(row=0, column=0, sticky=tk.W, pady=2)
@@ -193,8 +212,9 @@ class SettingsTab:
         
     def create_location_settings(self, parent):
         """Create location and time settings."""
-        main_frame = ttk.Frame(parent)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Location section header
+        main_frame = ttk.LabelFrame(parent, text="Location & Time Settings", padding=15)
+        main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Geographic location
         location_frame = ttk.LabelFrame(main_frame, text="Geographic Location", padding=10)
@@ -204,33 +224,33 @@ class SettingsTab:
         ttk.Label(location_frame, text="Latitude:").grid(row=0, column=0, sticky=tk.W, pady=2)
         self.latitude_var = tk.StringVar(value="40.7128")
         ttk.Entry(location_frame, textvariable=self.latitude_var, width=15).grid(row=0, column=1, sticky=tk.W, pady=2)
-        ttk.Label(location_frame, text="degrees (positive = North)").grid(row=0, column=2, sticky=tk.W, pady=2)
+        ttk.Label(location_frame, text="degrees (+ = North)").grid(row=0, column=2, sticky=tk.W, pady=2)
         
         # Longitude
         ttk.Label(location_frame, text="Longitude:").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.longitude_var = tk.StringVar(value="-74.0060")
         ttk.Entry(location_frame, textvariable=self.longitude_var, width=15).grid(row=1, column=1, sticky=tk.W, pady=2)
-        ttk.Label(location_frame, text="degrees (positive = East)").grid(row=1, column=2, sticky=tk.W, pady=2)
+        ttk.Label(location_frame, text="degrees (+ = East)").grid(row=1, column=2, sticky=tk.W, pady=2)
         
         # Elevation
         ttk.Label(location_frame, text="Elevation:").grid(row=2, column=0, sticky=tk.W, pady=2)
         self.elevation_var = tk.StringVar(value="10")
         ttk.Entry(location_frame, textvariable=self.elevation_var, width=15).grid(row=2, column=1, sticky=tk.W, pady=2)
-        ttk.Label(location_frame, text="meters above sea level").grid(row=2, column=2, sticky=tk.W, pady=2)
+        ttk.Label(location_frame, text="meters ASL").grid(row=2, column=2, sticky=tk.W, pady=2)
         
         # City/Location name
         ttk.Label(location_frame, text="Location Name:").grid(row=3, column=0, sticky=tk.W, pady=2)
         self.location_name_var = tk.StringVar(value="New York, NY")
-        ttk.Entry(location_frame, textvariable=self.location_name_var, width=30).grid(row=3, column=1, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Entry(location_frame, textvariable=self.location_name_var, width=25).grid(row=3, column=1, columnspan=2, sticky=tk.W, pady=2)
         
         # Time zone settings
         timezone_frame = ttk.LabelFrame(main_frame, text="Time Zone", padding=10)
-        timezone_frame.pack(fill=tk.X, pady=(0, 10))
+        timezone_frame.pack(fill=tk.X)
         
         # Time zone
         ttk.Label(timezone_frame, text="Time Zone:").grid(row=0, column=0, sticky=tk.W, pady=2)
         self.timezone_var = tk.StringVar(value="America/New_York")
-        timezone_combo = ttk.Combobox(timezone_frame, textvariable=self.timezone_var, width=25,
+        timezone_combo = ttk.Combobox(timezone_frame, textvariable=self.timezone_var, width=20,
                                     values=["America/New_York", "America/Chicago", "America/Denver", 
                                            "America/Los_Angeles", "Europe/London", "Europe/Paris",
                                            "Asia/Tokyo", "Australia/Sydney"])
@@ -242,17 +262,18 @@ class SettingsTab:
         ttk.Entry(timezone_frame, textvariable=self.utc_offset_var, width=10).grid(row=1, column=1, sticky=tk.W, pady=2)
         ttk.Label(timezone_frame, text="hours").grid(row=1, column=2, sticky=tk.W, pady=2)
         
-        # Auto-detect
+        # Auto-detect button (smaller)
         ttk.Button(
             timezone_frame, 
-            text="Auto-detect Location", 
+            text="Auto-detect", 
             command=self.auto_detect_location
-        ).grid(row=2, column=0, columnspan=3, pady=10)
+        ).grid(row=2, column=0, columnspan=2, pady=8, sticky=tk.W)
         
     def create_default_settings(self, parent):
         """Create default capture and session settings."""
-        main_frame = ttk.Frame(parent)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Defaults section header
+        main_frame = ttk.LabelFrame(parent, text="Default Settings", padding=15)
+        main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Default capture settings
         capture_frame = ttk.LabelFrame(main_frame, text="Default Capture Settings", padding=10)
@@ -283,7 +304,7 @@ class SettingsTab:
         
         # Timing settings
         timing_frame = ttk.LabelFrame(main_frame, text="Default Timing Settings", padding=10)
-        timing_frame.pack(fill=tk.X, pady=(0, 10))
+        timing_frame.pack(fill=tk.X)
         
         # Wait between sessions
         ttk.Label(timing_frame, text="Wait Between Sessions:").grid(row=0, column=0, sticky=tk.W, pady=2)
@@ -305,8 +326,9 @@ class SettingsTab:
         
     def create_advanced_settings(self, parent):
         """Create advanced application settings."""
-        main_frame = ttk.Frame(parent)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Advanced section header
+        main_frame = ttk.LabelFrame(parent, text="Advanced Settings", padding=15)
+        main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Logging settings
         logging_frame = ttk.LabelFrame(main_frame, text="Logging", padding=10)
@@ -355,16 +377,16 @@ class SettingsTab:
         day_change_spinbox = tk.Spinbox(history_frame, textvariable=self.day_change_hour_var, 
                                        from_=0, to=23, width=5, format="%02.0f")
         day_change_spinbox.grid(row=0, column=1, sticky=tk.W, pady=2)
-        ttk.Label(history_frame, text="(24-hour format, default 18 = 6 PM)").grid(row=0, column=2, sticky=tk.W, pady=2, padx=(5, 0))
+        ttk.Label(history_frame, text="(24-hour format)").grid(row=0, column=2, sticky=tk.W, pady=2, padx=(5, 0))
         
-        # Explanation
+        # Explanation (smaller font)
         ttk.Label(history_frame, 
-                 text="Sessions before this hour are recorded to the previous day's history file.",
-                 font=("Arial", 8)).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+                 text="Sessions before this hour go to previous day's history",
+                 font=("Arial", 8)).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(2, 0))
         
         # Backup settings
         backup_frame = ttk.LabelFrame(main_frame, text="Backup", padding=10)
-        backup_frame.pack(fill=tk.X, pady=(0, 10))
+        backup_frame.pack(fill=tk.X)
         
         # Auto-backup
         self.auto_backup_var = tk.BooleanVar(value=False)
@@ -377,7 +399,7 @@ class SettingsTab:
         # Backup location
         ttk.Label(backup_frame, text="Backup Location:").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.backup_location_var = tk.StringVar()
-        ttk.Entry(backup_frame, textvariable=self.backup_location_var, width=40).grid(row=1, column=1, sticky=tk.W, pady=2)
+        ttk.Entry(backup_frame, textvariable=self.backup_location_var, width=30).grid(row=1, column=1, sticky=tk.W, pady=2)
         ttk.Button(
             backup_frame, 
             text="Browse", 
@@ -396,6 +418,11 @@ class SettingsTab:
         self.auto_connect_var.set(telescope.get("auto_connect", True))
         self.camera_model_var.set(telescope.get("camera_model", "Dwarf3"))
         self.mount_type_var.set(telescope.get("mount_type", "Alt-Az"))
+        
+        # Stellarium settings
+        stellarium = config.get("stellarium", {})
+        self.stellarium_ip_var.set(stellarium.get("ip", "192.168.1.20"))
+        self.stellarium_port_var.set(str(stellarium.get("port", 8090)))
         
         # Location settings
         location = config.get("location", {})
@@ -440,6 +467,10 @@ class SettingsTab:
                     "auto_connect": self.auto_connect_var.get(),
                     "camera_model": self.camera_model_var.get(),
                     "mount_type": self.mount_type_var.get()
+                },
+                "stellarium": {
+                    "ip": self.stellarium_ip_var.get(),
+                    "port": int(self.stellarium_port_var.get())
                 },
                 "location": {
                     "latitude": float(self.latitude_var.get()),

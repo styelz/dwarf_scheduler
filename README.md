@@ -89,6 +89,27 @@ dwarf_scheduler/
    - Capture settings (frames, exposure, gain)
    - Calibration options (auto focus, plate solving)
 
+### Stellarium Integration
+
+The application can retrieve target information directly from Stellarium:
+
+1. **Setup Stellarium**:
+   - Install and run Stellarium
+   - Enable the "Remote Control" plugin (Plugins → Remote Control → Configure)
+   - Start the remote control server (default port: 8090)
+
+2. **Configure Connection**:
+   - Go to Settings → Telescope Settings → Stellarium Remote
+   - Set Stellarium IP address (default: 127.0.0.1 for local machine)
+   - Set Stellarium port (default: 8090)
+
+3. **Get Target from Stellarium**:
+   - In Stellarium, select any celestial object
+   - In the Sessions tab, click "Get from Stellarium"
+   - Target name and coordinates will be automatically populated
+
+**Note**: Stellarium's Remote Control plugin must be enabled and running for this feature to work.
+
 ### Scheduling Sessions
 
 1. Create or edit a session
@@ -186,6 +207,23 @@ Application logs are stored in the `logs/` directory:
    - Verify coordinates are correct
    - Ensure sufficient stars in field
    - Check internet connection for star database
+
+### Stellarium Connection Issues
+
+1. **Cannot connect to Stellarium**:
+   - Ensure Stellarium is running
+   - Verify Remote Control plugin is enabled and started
+   - Check IP address and port in Settings → Stellarium Remote
+   - Default settings: 127.0.0.1:8090
+
+2. **No object selected error**:
+   - Select an object in Stellarium before clicking "Get from Stellarium"
+   - Use Stellarium's search function or click on objects in the sky map
+
+3. **Stellarium plugin not found**:
+   - Go to Stellarium → Plugins → Remote Control
+   - Enable the plugin and configure server settings
+   - Restart Stellarium if necessary
 
 ## Development
 

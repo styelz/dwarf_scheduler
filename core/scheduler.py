@@ -80,8 +80,32 @@ class Scheduler:
         
     def _scheduler_loop(self):
         """Main scheduler loop."""
+        slave_mode_pause_count = 0
+        
         while self.is_running and not self.stop_event.is_set():
             try:
+                # Check if telescope is in SLAVE MODE
+                if self.dwarf_controller.is_slave_mode_detected():
+                    slave_mode_pause_count += 1
+                    
+                    # Report SLAVE MODE every 5 minutes (10 cycles of 30 seconds)
+                    if slave_mode_pause_count % 10 == 1:
+                        self._update_status("Scheduler paused - telescope in SLAVE MODE (being used by another application)")
+                        self.logger.warning("Scheduler paused - telescope is in SLAVE MODE, will retry when available")
+                    
+                    # Reset SLAVE MODE detection every 10 minutes to allow retry
+                    if slave_mode_pause_count >= 20:  # 20 * 30 seconds = 10 minutes
+                        self.logger.info("Resetting SLAVE MODE detection after 10 minutes, will attempt to reconnect")
+                        self.dwarf_controller.reset_slave_mode_detection()
+                        slave_mode_pause_count = 0
+                        
+                    # Skip session execution while in SLAVE MODE
+                    self.stop_event.wait(30)
+                    continue
+                else:
+                    # Reset counter when not in SLAVE MODE
+                    slave_mode_pause_count = 0
+                
                 # Check for scheduled sessions
                 scheduled_sessions = self.session_manager.get_scheduled_sessions()
                 
@@ -134,7 +158,11 @@ class Scheduler:
             # Connect to telescope first
             self._update_status("Connecting to telescope")
             if not self.dwarf_controller.connect():
-                raise Exception("Failed to connect to telescope")
+                # Check if SLAVE MODE was detected
+                if self.dwarf_controller.is_slave_mode_detected():
+                    raise Exception("Telescope is in SLAVE MODE - being used by another application")
+                else:
+                    raise Exception("Failed to connect to telescope")
                 
             self._update_status("Connected to telescope")
             
@@ -157,16 +185,31 @@ class Scheduler:
                 self.logger.warning(f"Session failed: {session_name}")
                 
         except Exception as e:
-            self.logger.error(f"Error executing session {session_name}: {e}")
-            # Move to Failed on exception
-            filename = self._get_session_filename(session)
-            if filename:
-                try:
-                    self.session_manager.move_session(filename, "Running", "Failed")
-                except Exception as move_error:
-                    self.logger.error(f"Failed to move session to Failed folder: {move_error}")
-            self._record_session_completion(session, "Failed", str(e))
-            self._update_status(f"Session error: {session_name}")
+            error_message = str(e)
+            self.logger.error(f"Error executing session {session_name}: {error_message}")
+            
+            # Check if this was a SLAVE MODE error
+            if "slave mode" in error_message.lower():
+                self.logger.warning(f"Session {session_name} failed due to SLAVE MODE - telescope being used by another application")
+                # Move back to ToDo for retry later when telescope becomes available
+                filename = self._get_session_filename(session)
+                if filename:
+                    try:
+                        self.session_manager.move_session(filename, "Running", "ToDo")
+                    except Exception as move_error:
+                        self.logger.error(f"Failed to move session back to ToDo folder: {move_error}")
+                self._record_session_completion(session, "Postponed", "Telescope in SLAVE MODE - moved back to ToDo for retry")
+                self._update_status(f"Session postponed due to SLAVE MODE: {session_name}")
+            else:
+                # Move to Failed on other exceptions
+                filename = self._get_session_filename(session)
+                if filename:
+                    try:
+                        self.session_manager.move_session(filename, "Running", "Failed")
+                    except Exception as move_error:
+                        self.logger.error(f"Failed to move session to Failed folder: {move_error}")
+                self._record_session_completion(session, "Failed", error_message)
+                self._update_status(f"Session error: {session_name}")
             
         finally:
             self.current_session = None

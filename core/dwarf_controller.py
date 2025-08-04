@@ -46,6 +46,9 @@ class DwarfController:
         self.current_session_active = False
         self.photo_session_running = False
         
+        # SLAVE MODE detection - when telescope is being used by another app
+        self.slave_mode_detected = False
+        
         # Telescope information for status display
         self.telescope_info = None
         
@@ -132,6 +135,10 @@ class DwarfController:
                         retry_count += 1
                         self.logger.info(f"Connection attempt {retry_count}/{max_retries}")
                         
+                        # Reset SLAVE MODE detection for each new connection attempt
+                        if retry_count == 1:
+                            self.slave_mode_detected = False
+                        
                         if self.use_dwarf_api:
                             # Use dwarf_python_api for connection
                             if self._connect_via_dwarf_api(timeout):
@@ -141,6 +148,13 @@ class DwarfController:
                                     callback(True, "Connected via dwarf_python_api")
                                 return True
                             else:
+                                # Check if SLAVE MODE was detected - if so, stop retrying
+                                if self.slave_mode_detected:
+                                    self.logger.error("SLAVE MODE detected - telescope is being used by another application. Stopping connection attempts.")
+                                    if callback:
+                                        callback(False, "Telescope is in SLAVE MODE - being used by another application")
+                                    return False
+                                
                                 if retry_count < max_retries:
                                     self.logger.warning(f"Connection attempt {retry_count} failed, retrying...")
                                     time.sleep(2)  # Wait before retry
@@ -543,12 +557,24 @@ TIMEOUT_CMD = 30
                 return None
             
             if exception:
+                # Check for SLAVE MODE error in exception message
+                if self._check_slave_mode_in_response(exception=exception):
+                    return None
+                
                 self.logger.error(f"perform_getstatus failed: {exception}")
+                return None
+            
+            # Check for SLAVE MODE in result message if result is a dict
+            if self._check_slave_mode_in_response(result=result):
                 return None
                 
             return result
             
         except Exception as e:
+            # Check for SLAVE MODE error in general exception
+            if self._check_slave_mode_in_response(exception=e):
+                return None
+                
             self.logger.error(f"Error in safe getstatus: {e}")
             return None
     
@@ -639,6 +665,9 @@ TIMEOUT_CMD = 30
                 
         except Exception as e:
             self.logger.error(f"Error starting session: {e}")
+            # Check if this is a SLAVE MODE error
+            if self._check_for_slave_mode(str(e)):
+                self.logger.warning("Telescope is in SLAVE MODE - cannot start session")
             return False
     
     def _stop_current_session(self):
@@ -980,6 +1009,9 @@ TIMEOUT_CMD = 30
                         
         except Exception as e:
             self.logger.error(f"Goto coordinates failed: {e}")
+            # Check if this is a SLAVE MODE error
+            if self._check_for_slave_mode(str(e)):
+                self.logger.warning("Telescope is in SLAVE MODE - cannot perform goto")
             if callback:
                 callback(False, f"Goto error: {e}")
             return False
@@ -1265,6 +1297,34 @@ TIMEOUT_CMD = 30
     def is_connected(self) -> bool:
         """Check if connected to telescope (non-blocking check)."""
         return self.connected
+    
+    def is_slave_mode_detected(self) -> bool:
+        """Check if SLAVE MODE was detected (telescope being used by another app)."""
+        return self.slave_mode_detected
+    
+    def reset_slave_mode_detection(self):
+        """Reset SLAVE MODE detection flag."""
+        self.slave_mode_detected = False
+    
+    def _check_slave_mode_in_response(self, result=None, exception=None) -> bool:
+        """Check if SLAVE MODE is detected in API response or exception."""
+        # Check exception first
+        if exception:
+            exception_str = str(exception).lower()
+            if "slave mode" in exception_str or "error slave mode" in exception_str:
+                self.slave_mode_detected = True
+                self.logger.error(f"SLAVE MODE detected in API call: {exception}")
+                return True
+        
+        # Check result message if result is a dict
+        if isinstance(result, dict):
+            message = result.get('message', '').lower()
+            if "slave mode" in message or "error slave mode" in message:
+                self.slave_mode_detected = True
+                self.logger.error(f"SLAVE MODE detected in API response: {result}")
+                return True
+        
+        return False
     
     def quick_status_check(self) -> Dict[str, Any]:
         """Get quick status without blocking operations."""

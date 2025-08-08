@@ -3,7 +3,4 @@ Pillow>=9.0.0
 protobuf>=3.20.0
 websockets>=10.0
 filelock>=3.0.0
-# Optional dependencies for enhanced functionality
-# astropy>=5.0.0  # For advanced astronomical calculations
-# matplotlib>=3.5.0  # For plotting and visualization
-# numpy>=1.21.0  # For numerical operations
+config>=0.0.0

@@ -25,7 +25,7 @@ The Dwarf3 Telescope Scheduler now automatically manages session files when addi
 
 ```
 Sessions/
-├── Available/     # Sessions available for editing and scheduling
+├── Available/    # Sessions available for editing and scheduling
 ├── ToDo/         # Sessions queued for execution (read-only)
 ├── Running/      # Currently executing sessions
 ├── Done/         # Successfully completed sessions

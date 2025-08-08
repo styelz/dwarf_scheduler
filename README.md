@@ -1,256 +1,45 @@
 # Dwarf3 Telescope Scheduler
 
-A comprehensive Python GUI application for scheduling and managing Dwarf3 smart telescope observation sessions.
+A comprehensive Python GUI application for scheduling and managing Dwarf3 smart telescope observation sessions. Built with a modular architecture featuring dual-mode API communication, automated session management, and an intuitive tabbed interface.
 
-## Features
+## ✨ Key Features
 
-- **Session Management**: Create, edit, and manage telescope observation sessions
-- **Scheduling**: Queue sessions for automatic execution at specified times
-- **History Tracking**: Keep detailed records of completed sessions
-- **Settings Configuration**: Configure telescope connection, location, and default parameters
-- **Automated Capture**: Automatic focusing, plate solving, and image capture
-- **GUI Interface**: User-friendly tabbed interface built with tkinter
+- **📅 Session Scheduling**: Create, queue, and automatically execute telescope observation sessions
+- **🎯 Target Management**: Direct Stellarium integration for easy target selection
+- **📊 Real-time Monitoring**: Live telescope status, battery level, and storage tracking
+- **📁 Smart File Management**: Automatic session file organization with status-based directories
+- **🔄 Dual API Support**: Primary websocket/protobuf API with HTTP REST fallback
+- **📈 Session History**: Comprehensive tracking and CSV export of all observations
+- **⚙️ Configuration Management**: Persistent settings with INI and JSON config files
+- **🖥️ Modern GUI**: User-friendly tabbed interface built with tkinter/ttk
 
-## Project Structure
+## 🚀 Quick Start
 
-```
-dwarf_scheduler/
-├── main.py                 # Main application entry point
-├── gui/                    # GUI components
-│   ├── main_window.py     # Main application window
-│   └── tabs/              # Individual tab implementations
-│       ├── schedule_tab.py
-│       ├── sessions_tab.py
-│       ├── settings_tab.py
-│       └── history_tab.py
-├── core/                   # Core functionality
-│   ├── config_manager.py  # Configuration management
-│   ├── session_manager.py # Session file management
-│   ├── scheduler.py       # Scheduling engine
-│   ├── dwarf_controller.py# Telescope control
-│   └── history_manager.py # History tracking
-├── Sessions/              # Session storage directories
-│   ├── Available/         # Available session templates
-│   ├── ToDo/             # Scheduled sessions
-│   ├── Running/          # Currently executing sessions
-│   ├── Done/             # Completed sessions
-│   ├── Failed/           # Failed sessions
-│   └── History/          # Session history CSV files
-├── config/               # Configuration files
-├── logs/                 # Application logs
-└── requirements.txt      # Python dependencies
-```
+### Prerequisites
+- **Python 3.8+** (3.10+ recommended)
+- **Windows/macOS/Linux** with tkinter support
+- **Dwarf3 telescope** with WiFi connectivity
+- **Network access** to telescope (WiFi or LAN)
 
-## Installation
+### Installation
 
-1. **Prerequisites**:
-   - Python 3.8 or higher
-   - Tkinter (usually included with Python)
-   - Network connection to Dwarf3 telescope
-
-2. **Install Dependencies**:
+1. **Clone the repository**:
    ```bash
-   pip install -r requirements.txt
+   git clone https://github.com/styelz/dwarf_scheduler.git
+   cd dwarf_scheduler
    ```
 
-3. **Run the Application**:
+2. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   
+   # Required: Install local dependencies
+   pip install -r requirements-local.txt --target .
+   ```
+
+3. **Launch the application**:
    ```bash
    python main.py
    ```
 
-## Configuration
-
-### First Time Setup
-
-1. **Telescope Connection**: 
-   - Go to Settings → Telescope tab
-   - Enter your Dwarf3 IP address (default: 192.168.4.1)
-   - Test the connection
-
-2. **Location Settings**:
-   - Go to Settings → Location tab
-   - Enter your geographic coordinates
-   - Set your timezone
-
-3. **Default Settings**:
-   - Configure default capture parameters
-   - Set preferred frame counts and exposure times
-
-## Usage
-
-### Creating Sessions
-
-1. Go to the **Sessions** tab
-2. Click **New Session**
-3. Fill in session details:
-   - Session name and target name
-   - Start time for scheduling
-   - Target coordinates (RA/DEC)
-   - Capture settings (frames, exposure, gain)
-   - Calibration options (auto focus, plate solving)
-
-### Stellarium Integration
-
-The application can retrieve target information directly from Stellarium:
-
-1. **Setup Stellarium**:
-   - Install and run Stellarium
-   - Enable the "Remote Control" plugin (Plugins → Remote Control → Configure)
-   - Start the remote control server (default port: 8090)
-
-2. **Configure Connection**:
-   - Go to Settings → Telescope Settings → Stellarium Remote
-   - Set Stellarium IP address (default: 127.0.0.1 for local machine)
-   - Set Stellarium port (default: 8090)
-
-3. **Get Target from Stellarium**:
-   - In Stellarium, select any celestial object
-   - In the Sessions tab, click "Get from Stellarium"
-   - Target name and coordinates will be automatically populated
-
-**Note**: Stellarium's Remote Control plugin must be enabled and running for this feature to work.
-
-### Scheduling Sessions
-
-1. Create or edit a session
-2. Click **Add to Schedule**
-3. Go to the **Schedule** tab
-4. Start the scheduler to begin automatic execution
-
-### Session File Management
-
-The application automatically manages session files during scheduling:
-
-- **Adding to Schedule**: Sessions move from `Sessions/Available/` to `Sessions/ToDo/`
-- **Removing from Queue**: Sessions move back from `Sessions/ToDo/` to `Sessions/Available/`
-- **During Execution**: Sessions move through `Running/`, then to `Done/` or `Failed/`
-
-This prevents editing of scheduled sessions and maintains data integrity. See `SESSION_WORKFLOW.md` for detailed information.
-
-### Viewing History
-
-1. Go to the **History** tab
-2. View completed sessions with detailed information
-3. Use filters to find specific sessions
-4. Export history data to CSV
-
-## Session File Format
-
-Sessions are stored as JSON files with the following structure:
-
-```json
-{
-    "session_name": "M31_Session_001",
-    "target_name": "M31 - Andromeda Galaxy",
-    "start_time": "2024-08-04 22:00:00",
-    "description": "Deep sky imaging of M31",
-    "coordinates": {
-        "ra": "00:42:44",
-        "dec": "+41:16:09"
-    },
-    "capture_settings": {
-        "frame_count": 50,
-        "exposure_time": 120,
-        "gain": 100,
-        "binning": "1x1",
-        "filter": "L"
-    },
-    "calibration": {
-        "auto_focus": true,
-        "plate_solve": true,
-        "auto_guide": false,
-        "settling_time": 10,
-        "focus_timeout": 300
-    }
-}
-```
-
-## API Integration
-
-The application communicates with the Dwarf3 telescope through its REST API. Key endpoints used:
-
-- `/api/status` - Get telescope status
-- `/api/mount/goto` - Move to coordinates  
-- `/api/camera/capture` - Capture images
-- `/api/camera/autofocus` - Perform auto focus
-- `/api/mount/platesolve` - Plate solving
-- `/api/guiding/start` - Start auto guiding
-
-## Logging
-
-Application logs are stored in the `logs/` directory:
-- `dwarf_scheduler.log` - Main application log
-- Log level can be configured in Settings → Advanced
-
-## Troubleshooting
-
-### Connection Issues
-
-1. **Cannot connect to telescope**:
-   - Verify Dwarf3 is powered on and WiFi is active
-   - Check IP address in Settings
-   - Ensure computer is connected to Dwarf3 WiFi network
-
-2. **Sessions not executing**:
-   - Check if scheduler is started
-   - Verify session start times are in the future
-   - Check logs for error messages
-
-### Session Problems
-
-1. **Auto focus fails**:
-   - Ensure target is bright enough
-   - Check focus timeout settings
-   - Try manual focusing first
-
-2. **Plate solving fails**:
-   - Verify coordinates are correct
-   - Ensure sufficient stars in field
-   - Check internet connection for star database
-
-### Stellarium Connection Issues
-
-1. **Cannot connect to Stellarium**:
-   - Ensure Stellarium is running
-   - Verify Remote Control plugin is enabled and started
-   - Check IP address and port in Settings → Stellarium Remote
-   - Default settings: 127.0.0.1:8090
-
-2. **No object selected error**:
-   - Select an object in Stellarium before clicking "Get from Stellarium"
-   - Use Stellarium's search function or click on objects in the sky map
-
-3. **Stellarium plugin not found**:
-   - Go to Stellarium → Plugins → Remote Control
-   - Enable the plugin and configure server settings
-   - Restart Stellarium if necessary
-
-## Development
-
-### Adding New Features
-
-1. **GUI Components**: Add new tabs in `gui/tabs/`
-2. **Core Logic**: Extend functionality in `core/`
-3. **Configuration**: Update `config_manager.py` for new settings
-
-### Testing
-
-Run the application in development mode:
-```bash
-python main.py --debug
-```
-
-## License
-
-This project is open source. Please check the license file for details.
-
-## Contributing
-
-Contributions are welcome! Please submit issues and pull requests on the project repository.
-
-## Support
-
-For questions and support:
-- Check the logs for error messages
-- Review the troubleshooting section
-- Submit issues on the project repository
+**Happy observing! 🔭✨**

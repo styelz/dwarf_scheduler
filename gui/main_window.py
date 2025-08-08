@@ -199,13 +199,7 @@ class MainWindow:
     def update_connection_status(self, connected, telescope_info=None):
         """Update the connection status indicator."""
         if connected:
-            # Show more detailed connection info if available
-            if telescope_info:
-                api_mode = telescope_info.get('api_mode', 'HTTP')
-                model = telescope_info.get('model', 'DWARF3')
-                self.connection_label.config(text=f"✓ {model} ({api_mode})", foreground="green")
-            else:
-                self.connection_label.config(text="✓ Connected", foreground="green")
+            self.connection_label.config(text="✓ Connected", foreground="green")
         else:
             self.connection_label.config(text="✗ Disconnected", foreground="red")
     

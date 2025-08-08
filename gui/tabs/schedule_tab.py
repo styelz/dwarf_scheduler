@@ -35,10 +35,7 @@ class ScheduleTab:
         # Initialize scheduler status
         self.update_scheduler_status()
         self.update_button_states()  # Update button states on startup
-        
-        # Start periodic telescope status updates
-        self.start_periodic_telescope_status_update()
-        
+                
     def create_widgets(self):
         """Create and layout widgets for the schedule tab."""
         self.frame = ttk.Frame(self.parent)
@@ -110,31 +107,7 @@ class ScheduleTab:
             width=10
         )
         self.connection_button.grid(row=0, column=3, padx=2, pady=2, sticky=tk.EW)
-        
-        # Test connection button - Row 2
-        ttk.Button(
-            button_grid, 
-            text="Test Connection", 
-            command=self.test_telescope_connection,
-            width=15
-        ).grid(row=1, column=0, columnspan=4, padx=2, pady=2, sticky=tk.EW)
-        
-        # Telescope status display
-        status_frame = ttk.LabelFrame(controls_frame, text="Telescope Status", padding=5)
-        status_frame.pack(fill=tk.X, pady=(5, 0))
-        
-        self.telescope_status_text = tk.Text(
-            status_frame,
-            height=4,
-            font=('Segoe UI', 8),
-            bg='#f8f8f8',
-            fg='#333333',
-            relief=tk.SUNKEN,
-            bd=1,
-            state=tk.DISABLED
-        )
-        self.telescope_status_text.pack(fill=tk.X, padx=5, pady=5)
-        
+                
         # Schedule tree
         self.create_schedule_tree(left_frame)
         
@@ -437,7 +410,7 @@ class ScheduleTab:
             if status == "Queued":
                 execution_status = "✓ Ready for execution when scheduled time arrives"
             elif status == "Running":
-                execution_status = "⚡ Currently executing"
+                execution_status = "✓ Currently executing"
             elif status == "Completed":
                 execution_status = "✓ Execution completed successfully"
             elif status == "Failed":
@@ -538,7 +511,6 @@ Notes:
             if hasattr(controller, 'connecting') and controller.connecting:
                 # Cancel connection attempt
                 self.add_log_message("INFO", "Cancelling connection attempt...")
-                self.update_telescope_status_display("Cancelling...")
                 self.connection_button.config(text="Cancelling...", state=tk.DISABLED)
                 
                 def cancel_callback():
@@ -547,13 +519,11 @@ Notes:
                         controller.cancel_connection()  # Use proper cancel method
                         self.frame.after(0, lambda: [
                             self.add_log_message("INFO", "Connection attempt cancelled"),
-                            self.update_telescope_status_display("✗ Cancelled"),
                             self.update_button_states()
                         ])
                     except Exception as e:
                         self.frame.after(0, lambda: [
                             self.add_log_message("ERROR", f"Error cancelling connection: {e}"),
-                            self.update_telescope_status_display("✗ Cancel Error"),
                             self.update_button_states()
                         ])
                 
@@ -563,7 +533,6 @@ Notes:
             elif controller.is_connected():
                 # Disconnect
                 self.add_log_message("INFO", "Disconnecting from telescope...")
-                self.update_telescope_status_display("Disconnecting...")
                 self.connection_button.config(text="Disconnecting...", state=tk.DISABLED)
                 
                 def disconnect_callback():
@@ -572,13 +541,11 @@ Notes:
                         controller.disconnect()
                         self.frame.after(0, lambda: [
                             self.add_log_message("INFO", "Disconnected from telescope"),
-                            self.update_telescope_status_display("✗ Disconnected"),
                             self.update_button_states()
                         ])
                     except Exception as e:
                         self.frame.after(0, lambda: [
                             self.add_log_message("ERROR", f"Error during disconnect: {e}"),
-                            self.update_telescope_status_display("✗ Disconnect Error"),
                             self.update_button_states()
                         ])
                 
@@ -589,7 +556,6 @@ Notes:
             else:
                 # Connect
                 self.add_log_message("INFO", "Connecting to telescope...")
-                self.update_telescope_status_display("Connecting...")
                 # Change button to show "Cancel" during connection attempt
                 self.connection_button.config(text="✖ Cancel", style="Disconnected.TButton", state=tk.NORMAL)
                 
@@ -597,51 +563,23 @@ Notes:
                     """Handle connection result."""
                     self.frame.after(0, lambda: [
                         self._handle_connection_result(success, message)
-                    ])
+                    ])                  
                 
                 # Use threaded connection with reasonable timeout (3 retries * ~10s each = ~30s max)
                 controller.connect(timeout=10, callback=connect_callback)
-                
+
         except Exception as e:
             self.add_log_message("ERROR", f"Error toggling connection: {e}")
-            self.update_telescope_status_display("✗ Connection Error")
             if hasattr(self, 'connection_button'):
                 self.connection_button.config(state=tk.NORMAL)
-            
+
     def _handle_connection_result(self, success, message):
         """Handle the result of a connection attempt."""
         try:
             if success:
                 self.add_log_message("INFO", f"Successfully connected: {message}")
-                
-                # Get detailed status for display - use threaded call to avoid blocking GUI
-                def get_status_and_update():
-                    """Get telescope status in background thread."""
-                    try:
-                        status_info = self.scheduler.get_telescope_status()
-                        status_text = "✓ Connected\nBasic Info"
-                        
-                        if status_info.get("connected", False):
-                            model = status_info.get('model', 'DWARF3')
-                            api_mode = status_info.get('api_mode', 'HTTP')
-                            status_text = f"✓ {model}\nMode: {api_mode}\nConnected"
-                        
-                        # Update GUI from main thread
-                        self.frame.after(0, lambda: self.update_telescope_status_display(status_text))
-                    except Exception as e:
-                        self.logger.error(f"Error getting telescope status: {e}")
-                        self.frame.after(0, lambda: self.update_telescope_status_display("✓ Connected\nStatus Unknown"))
-                
-                # Start status update in background
-                import threading
-                threading.Thread(target=get_status_and_update, daemon=True).start()
-                
-                # Immediately show basic connected status
-                self.update_telescope_status_display("✓ Connected\nGetting Info...")
-                
             else:
                 self.add_log_message("ERROR", f"Connection failed: {message}")
-                self.update_telescope_status_display("✗ Connection Failed")
                 
             # Update button states regardless of result
             self.update_button_states()
@@ -974,136 +912,3 @@ Notes:
         # Refresh the schedule display to show updated status
         self.refresh_schedule()
         
-    def test_telescope_connection(self):
-        """Test telescope connection in background."""
-        try:
-            self.add_log_message("INFO", "Testing telescope connection...")
-            
-            # Disable button during test and change text
-            if hasattr(self, 'test_connection_button'):
-                self.test_connection_button.config(state=tk.DISABLED, text="Testing...")
-            
-            def test_callback(success, message):
-                """Handle test result."""
-                self.frame.after(0, lambda: [
-                    self._restore_test_button(),
-                    self._handle_test_result(success, message)
-                ])
-            
-            # Use shorter timeout for testing - this is a one-time test, not a keepalive
-            self.scheduler.dwarf_controller.test_connection(callback=test_callback)
-            
-        except Exception as e:
-            self.add_log_message("ERROR", f"Error testing connection: {e}")
-            self._restore_test_button()
-    
-    def _restore_test_button(self):
-        """Restore test button to normal state."""
-        if hasattr(self, 'test_connection_button'):
-            self.test_connection_button.config(state=tk.NORMAL, text="Test Connection")
-    
-    def _handle_test_result(self, success, message):
-        """Handle test connection result."""
-        try:
-            if success:
-                self.add_log_message("INFO", f"Connection test successful: {message}")
-                self.update_telescope_status_display("✓ Test Successful")
-            else:
-                self.add_log_message("ERROR", f"Connection test failed: {message}")
-                self.update_telescope_status_display("✗ Test Failed")
-                
-            # Update button states after test
-            self.update_button_states()
-            
-        except Exception as e:
-            self.logger.error(f"Error handling test result: {e}")
-            self.add_log_message("ERROR", f"Error handling test: {e}")
-    
-    def update_telescope_status_display(self, status_text):
-        """Update the telescope status display."""
-        try:
-            self.telescope_status_text.config(state=tk.NORMAL)
-            self.telescope_status_text.delete("1.0", tk.END)
-            self.telescope_status_text.insert("1.0", status_text)
-            self.telescope_status_text.config(state=tk.DISABLED)
-        except Exception as e:
-            self.logger.error(f"Failed to update telescope status display: {e}")
-    
-    def start_periodic_telescope_status_update(self):
-        """Start periodic telescope status updates."""
-        def update_status():
-            # Check if updates are still active
-            if not self.periodic_updates_active:
-                return
-                
-            try:
-                if hasattr(self, 'telescope_status_text'):
-                    # Get status in background thread to avoid GUI blocking
-                    def get_status_threaded():
-                        """Get telescope status in background thread."""
-                        try:
-                            status_info = self.scheduler.get_telescope_status()
-                            
-                            # Update GUI from main thread
-                            self.frame.after(0, lambda: self._update_periodic_status(status_info))
-                        except Exception as e:
-                            self.logger.error(f"Error getting telescope status: {e}")
-                            # Update GUI with error state
-                            self.frame.after(0, lambda: self._update_periodic_status({"connected": False, "error": True}))
-                    
-                    # Start status retrieval in background thread
-                    import threading
-                    threading.Thread(target=get_status_threaded, daemon=True).start()
-                    
-            except Exception as e:
-                self.logger.error(f"Error in periodic telescope status update: {e}")
-            
-            # Schedule next update - more frequent during connection attempts, less frequent otherwise
-            if self.periodic_updates_active:
-                controller = self.scheduler.dwarf_controller
-                # Check if connecting - if so, update more frequently for responsive UI
-                if hasattr(controller, 'connecting') and controller.connecting:
-                    update_interval = 2000  # 2 seconds during connection attempts
-                else:
-                    update_interval = 30000  # 30 seconds during normal operation
-                    
-                self.frame.after(update_interval, update_status)
-        
-        # Start the periodic updates
-        self.frame.after(10000, update_status)  # First update after 10 seconds
-    
-    def _update_periodic_status(self, status_info):
-        """Update periodic status display (called from main thread)."""
-        try:
-            if status_info.get("connected", False):
-                model = status_info.get('model', 'DWARF3')
-                api_mode = status_info.get('api_mode', 'HTTP')
-                
-                # Create compact status display
-                status_text = f"✓ {model}\n"
-                status_text += f"Mode: {api_mode}\n"
-                
-                # Add key info if available
-                if 'firmware_version' in status_info and status_info['firmware_version'] != "Connected via API":
-                    fw = status_info['firmware_version'][:10]
-                    status_text += f"FW: {fw}\n"
-                
-                if api_mode == "dwarf_python_api":
-                    status_text += "Real-time: ✓"
-                else:
-                    status_text += "Basic: ✓"
-                    
-            else:
-                status_text = "✗ Disconnected"
-            
-            self.update_telescope_status_display(status_text)
-            
-            # Also update button states to handle connecting/connected/disconnected states
-            self.update_button_states()
-            
-        except Exception as e:
-            self.logger.error(f"Error updating periodic status display: {e}")
-    
-    def stop_periodic_updates(self):
-        """Stop periodic telescope status updates."""
-        self.periodic_updates_active = False

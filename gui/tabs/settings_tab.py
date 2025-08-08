@@ -525,23 +525,7 @@ class SettingsTab:
             self.load_settings()
             # Auto-save the reset values
             self.auto_save_settings()
-            
-    def test_connection(self):
-        """Test connection to telescope."""
-        try:
-            # This would test the actual connection to the Dwarf telescope
-            ip = self.dwarf_ip_var.get()
-            port = int(self.port_var.get())
-            timeout = int(self.timeout_var.get())
-            
-            # Placeholder for actual connection test
-            messagebox.showinfo("Connection Test", 
-                              f"Testing connection to {ip}:{port}...\n"
-                              f"(Connection test not implemented yet)")
-            
-        except Exception as e:
-            messagebox.showerror("Connection Error", f"Connection test failed: {e}")
-            
+                        
     def auto_detect_location(self):
         """Auto-detect geographic location."""
         # This would use a geolocation service

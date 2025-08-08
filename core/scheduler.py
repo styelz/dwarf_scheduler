@@ -472,27 +472,6 @@ class Scheduler:
                     })
                 
                 return quick_status
-            
-            # Only attempt connection test if not already connected
-            # Use a very short timeout to prevent GUI blocking
-            elif hasattr(self.dwarf_controller, 'test_connection_sync'):
-                # Quick connection test with minimal timeout
-                try:
-                    # This should be fast and non-blocking
-                    connected = self.dwarf_controller._test_connection()
-                    if connected:
-                        return {
-                            "connected": True, 
-                            "model": "DWARF3", 
-                            "api_mode": "HTTP",
-                            "status": "Connected via HTTP",
-                            "last_update": time.time()
-                        }
-                    else:
-                        return {"connected": False, "status": "Unable to connect"}
-                except Exception as e:
-                    self.logger.debug(f"Quick connection test failed: {e}")
-                    return {"connected": False, "status": f"Connection test failed"}
             else:
                 return {"connected": False, "status": "No connection available"}
                 

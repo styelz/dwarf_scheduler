@@ -34,7 +34,7 @@ class HistoryManager:
     def _get_day_change_hour(self):
         """Get the hour when the day changes (default 18:00 / 6 PM)."""
         if self.config_manager:
-            return self.config_manager.get_setting("history", "day_change_hour", 18)
+            return self.config_manager.get_setting("CONFIG", "day_change_hour", 18)
         return 18
         
     def _get_session_date(self, timestamp=None):

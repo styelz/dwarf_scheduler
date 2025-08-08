@@ -7,6 +7,7 @@ from tkinter import ttk, messagebox
 import logging
 import os
 import datetime
+import threading  # Ensure threading is imported at the top of the file
 from core.scheduler import Scheduler
 from core.session_manager import SessionManager
 
@@ -22,6 +23,9 @@ class ScheduleTab:
         self.session_manager = SessionManager()
         self.scheduler = Scheduler(self.session_manager, config_manager)
         
+        # Control flag for periodic updates
+        self.periodic_updates_active = True
+        
         # Set up scheduler callbacks for real-time log updates
         self.scheduler.set_status_callback(self.on_scheduler_status_update)
         self.scheduler.set_session_callback(self.on_scheduler_session_update)
@@ -31,10 +35,16 @@ class ScheduleTab:
         
         # Initialize scheduler status
         self.update_scheduler_status()
-        
+        self.update_button_states()  # Update button states on startup
+                
     def create_widgets(self):
         """Create and layout widgets for the schedule tab."""
         self.frame = ttk.Frame(self.parent)
+        
+        # Configure custom button styles
+        style = ttk.Style()
+        style.configure("Connected.TButton", foreground="green")
+        style.configure("Disconnected.TButton", foreground="red")
         
         # Main vertical paned window - split between top content and log
         main_paned = ttk.PanedWindow(self.frame, orient=tk.VERTICAL)
@@ -64,6 +74,7 @@ class ScheduleTab:
         button_grid.grid_columnconfigure(0, weight=1)
         button_grid.grid_columnconfigure(1, weight=1)
         button_grid.grid_columnconfigure(2, weight=1)
+        button_grid.grid_columnconfigure(3, weight=1)
         
         # Main control buttons - Row 1
         self.start_button = ttk.Button(
@@ -89,6 +100,15 @@ class ScheduleTab:
             width=10
         ).grid(row=0, column=2, padx=2, pady=2, sticky=tk.EW)
         
+        # Connection control button
+        self.connection_button = ttk.Button(
+            button_grid, 
+            text="Connect", 
+            command=self.toggle_telescope_connection,
+            width=10
+        )
+        self.connection_button.grid(row=0, column=3, padx=2, pady=2, sticky=tk.EW)
+                
         # Schedule tree
         self.create_schedule_tree(left_frame)
         
@@ -391,7 +411,7 @@ class ScheduleTab:
             if status == "Queued":
                 execution_status = "✓ Ready for execution when scheduled time arrives"
             elif status == "Running":
-                execution_status = "⚡ Currently executing"
+                execution_status = "✓ Currently executing"
             elif status == "Completed":
                 execution_status = "✓ Execution completed successfully"
             elif status == "Failed":
@@ -453,6 +473,7 @@ Notes:
         """Update the enabled/disabled state of control buttons based on scheduler status."""
         try:
             is_running = hasattr(self.scheduler, 'is_running') and self.scheduler.is_running
+            is_connected = self.scheduler.dwarf_controller.is_connected()
             
             if hasattr(self, 'start_button') and hasattr(self, 'stop_button'):
                 if is_running:
@@ -464,8 +485,108 @@ Notes:
                     self.start_button.config(state=tk.NORMAL)
                     self.stop_button.config(state=tk.DISABLED)
                     
+            # Update connection button state and text
+            if hasattr(self, 'connection_button'):
+                controller = self.scheduler.dwarf_controller
+                
+                # Check connection state priority: connecting > connected > disconnected
+                if hasattr(controller, 'connecting') and controller.connecting:
+                    # Connection in progress - show cancel option
+                    self.connection_button.config(text="✖ Cancel", style="Disconnected.TButton", state=tk.NORMAL)
+                elif controller.connected:  # Use direct connected flag instead of is_connected() method
+                    # Connected - show disconnect option
+                    self.connection_button.config(text="✓ Disconnect", style="Connected.TButton", state=tk.NORMAL)
+                else:
+                    # Disconnected - show connect option
+                    self.connection_button.config(text="⚡ Connect", style="Disconnected.TButton", state=tk.NORMAL)
+               
         except Exception as e:
             self.logger.error(f"Failed to update button states: {e}")
+            
+    def toggle_telescope_connection(self):
+        """Toggle telescope connection (connect/disconnect)."""
+        try:
+            controller = self.scheduler.dwarf_controller
+
+            # Check if we're currently in a connecting state
+            if hasattr(controller, 'connecting') and controller.connecting:
+                # Cancel connection attempt
+                self.add_log_message("INFO", "Cancelling connection attempt...")
+                self.connection_button.config(text="Cancelling...", state=tk.DISABLED)
+
+                def cancel_callback():
+                    """Handle connection cancellation."""
+                    try:
+                        controller.cancel_connection()  # Use proper cancel method
+                        self.frame.after(0, lambda: [
+                            self.add_log_message("INFO", "Connection attempt cancelled"),
+                            self.update_button_states()
+                        ])
+                    except Exception as e:
+                        self.frame.after(0, lambda: [
+                            self.add_log_message("ERROR", f"Error cancelling connection: {e}"),
+                            self.update_button_states()
+                        ])
+
+                threading.Thread(target=cancel_callback, daemon=True).start()
+
+            elif controller.is_connected():
+                # Disconnect
+                self.add_log_message("INFO", "Disconnecting from telescope...")
+                self.connection_button.config(text="Disconnecting...", state=tk.DISABLED)
+
+                def disconnect_callback():
+                    """Handle disconnect completion."""
+                    try:
+                        controller.disconnect()
+                        self.frame.after(0, lambda: [
+                            self.add_log_message("INFO", "Disconnected from telescope"),
+                            self.update_button_states()
+                        ])
+                    except Exception as e:
+                        self.frame.after(0, lambda: [
+                            self.add_log_message("ERROR", f"Error during disconnect: {e}"),
+                            self.update_button_states()
+                        ])
+
+                threading.Thread(target=disconnect_callback, daemon=True).start()
+
+            else:
+                # Connect
+                self.add_log_message("INFO", "Connecting to telescope...")
+                self.connection_button.config(text="✖ Cancel", style="Disconnected.TButton", state=tk.NORMAL)
+
+                def connect_callback(success, message):
+                    """Handle connection result."""
+                    self.frame.after(0, lambda: [
+                        self._handle_connection_result(success, message)
+                    ])
+
+                # Use threaded connection with reasonable timeout (3 retries * ~10s each = ~30s max)
+                threading.Thread(
+                    target=lambda: controller.connect(timeout=10, callback=connect_callback),
+                    daemon=True
+                ).start()
+
+        except Exception as e:
+            self.add_log_message("ERROR", f"Error toggling connection: {e}")
+            if hasattr(self, 'connection_button'):
+                self.connection_button.config(state=tk.NORMAL)
+
+    def _handle_connection_result(self, success, message):
+        """Handle the result of a connection attempt."""
+        try:
+            if success:
+                self.add_log_message("INFO", f"Successfully connected: {message}")
+            else:
+                self.add_log_message("ERROR", f"Connection failed: {message}")
+
+            # Update button states regardless of result
+            self.update_button_states()
+
+        except Exception as e:
+            self.logger.error(f"Error handling connection result: {e}")
+            self.add_log_message("ERROR", f"Error handling connection: {e}")
             
     def remove_from_queue(self):
         """Remove selected session from queue (only works for Queued sessions)."""
@@ -790,3 +911,4 @@ Notes:
             
         # Refresh the schedule display to show updated status
         self.refresh_schedule()
+

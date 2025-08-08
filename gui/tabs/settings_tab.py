@@ -14,63 +14,132 @@ class SettingsTab:
         self.config_manager = config_manager
         self.logger = logging.getLogger(__name__)
         
+        # Reference to scheduler will be set by main window
+        self.scheduler = None
+        
+        # Auto-save debounce timer
+        self.auto_save_timer = None
+        self.auto_save_delay = 1000  # 1 second delay in milliseconds
+        
         self.create_widgets()
         self.load_settings()
+        self.setup_auto_save_callbacks()
+        
+    def set_scheduler_reference(self, scheduler):
+        """Set reference to scheduler for settings updates."""
+        self.scheduler = scheduler
+    
+    def setup_auto_save_callbacks(self):
+        """Setup auto-save callbacks for all settings widgets."""
+        # Get all StringVar, IntVar, BooleanVar, DoubleVar instances
+        vars_to_watch = []
+        
+        # Telescope settings
+        vars_to_watch.extend([
+            self.dwarf_ip_var, self.port_var, self.timeout_var,
+            self.auto_connect_var, self.camera_model_var, self.mount_type_var,
+            self.stellarium_ip_var, self.stellarium_port_var
+        ])
+        
+        # Location settings
+        vars_to_watch.extend([
+            self.latitude_var, self.longitude_var,
+            self.location_name_var, self.timezone_var, self.utc_offset_var
+        ])
+        
+        # Default settings
+        vars_to_watch.extend([
+            self.default_frames_var, self.default_exposure_var, self.default_gain_var,
+            self.default_binning_var, self.session_wait_var, self.default_settling_var,
+            self.default_focus_timeout_var
+        ])
+        
+        # History settings
+        vars_to_watch.append(self.day_change_hour_var)
+        
+        # Add trace callbacks to all variables
+        for var in vars_to_watch:
+            if hasattr(var, 'trace_add'):  # Modern tkinter
+                var.trace_add('write', self.on_setting_changed)
+            else:  # Older tkinter
+                var.trace('w', self.on_setting_changed)
+    
+    def on_setting_changed(self, *args):
+        """Called when any setting changes - triggers debounced auto-save."""
+        # Cancel existing timer if it exists
+        if self.auto_save_timer:
+            self.parent.after_cancel(self.auto_save_timer)
+        
+        # Schedule new auto-save
+        self.auto_save_timer = self.parent.after(self.auto_save_delay, self.auto_save_settings)
+    
+    def auto_save_settings(self):
+        """Automatically save settings (debounced version)."""
+        try:
+            self.save_settings_internal()
+            self.logger.debug("Settings auto-saved")
+        except Exception as e:
+            self.logger.error(f"Auto-save failed: {e}")
+        finally:
+            self.auto_save_timer = None
         
     def create_widgets(self):
         """Create and layout widgets for the settings tab."""
         self.frame = ttk.Frame(self.parent)
         
-        # Create notebook for different setting categories
-        settings_notebook = ttk.Notebook(self.frame)
-        settings_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Create a canvas and scrollbar for scrollable content
+        canvas = tk.Canvas(self.frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
         
-        # Telescope Connection tab
-        telescope_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(telescope_frame, text="Telescope")
-        self.create_telescope_settings(telescope_frame)
+        # Configure scrollable frame
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
         
-        # Location tab
-        location_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(location_frame, text="Location")
-        self.create_location_settings(location_frame)
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
         
-        # Defaults tab
-        defaults_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(defaults_frame, text="Defaults")
-        self.create_default_settings(defaults_frame)
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True, padx=(5, 0), pady=5)
+        scrollbar.pack(side="right", fill="y", pady=5)
         
-        # Advanced tab
-        advanced_frame = ttk.Frame(settings_notebook)
-        settings_notebook.add(advanced_frame, text="Advanced")
-        self.create_advanced_settings(advanced_frame)
+        # Bind mousewheel to canvas
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
         
-        # Save/Reset buttons
-        button_frame = ttk.Frame(self.frame)
-        button_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Create main container with two columns
+        main_container = ttk.Frame(scrollable_frame)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
+        # Left column
+        left_column = ttk.Frame(main_container)
+        left_column.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        
+        # Right column
+        right_column = ttk.Frame(main_container)
+        right_column.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        
+        # Distribute settings across two columns
+        self.create_telescope_settings(left_column)
+        self.create_location_settings(left_column)
+        self.create_default_settings(right_column)
+        self.create_advanced_settings(right_column)
+        
+        right_column.pack(fill=tk.X, padx=5, pady=5)        
         ttk.Button(
-            button_frame, 
-            text="Save Settings", 
-            command=self.save_settings
-        ).pack(side=tk.LEFT, padx=(0, 5))
-        
-        ttk.Button(
-            button_frame, 
+            right_column, 
             text="Reset to Defaults", 
             command=self.reset_defaults
-        ).pack(side=tk.LEFT, padx=(0, 5))
-        
-        ttk.Button(
-            button_frame, 
-            text="Test Connection", 
-            command=self.test_connection
-        ).pack(side=tk.RIGHT)
+        ).pack(side=tk.LEFT)
         
     def create_telescope_settings(self, parent):
         """Create telescope connection settings."""
-        main_frame = ttk.Frame(parent)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Telescope section header
+        main_frame = ttk.LabelFrame(parent, text="Telescope Settings", padding=10)
+        main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Connection settings
         conn_frame = ttk.LabelFrame(main_frame, text="Connection Settings", padding=10)
@@ -100,9 +169,23 @@ class SettingsTab:
             variable=self.auto_connect_var
         ).grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=5)
         
+        # Stellarium settings
+        stellarium_frame = ttk.LabelFrame(main_frame, text="Stellarium Remote", padding=10)
+        stellarium_frame.pack(fill=tk.X, pady=(0, 0))
+        
+        # Stellarium IP Address
+        ttk.Label(stellarium_frame, text="Stellarium IP:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.stellarium_ip_var = tk.StringVar(value="127.0.0.1")
+        ttk.Entry(stellarium_frame, textvariable=self.stellarium_ip_var, width=20).grid(row=0, column=1, sticky=tk.W, pady=2)
+        
+        # Stellarium Port
+        ttk.Label(stellarium_frame, text="Stellarium Port:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.stellarium_port_var = tk.StringVar(value="8090")
+        ttk.Entry(stellarium_frame, textvariable=self.stellarium_port_var, width=10).grid(row=1, column=1, sticky=tk.W, pady=2)
+        
         # Device settings
         device_frame = ttk.LabelFrame(main_frame, text="Device Settings", padding=10)
-        device_frame.pack(fill=tk.X, pady=(0, 10))
+        device_frame.pack(fill=tk.X)
         
         # Camera settings
         ttk.Label(device_frame, text="Camera Model:").grid(row=0, column=0, sticky=tk.W, pady=2)
@@ -120,8 +203,9 @@ class SettingsTab:
         
     def create_location_settings(self, parent):
         """Create location and time settings."""
-        main_frame = ttk.Frame(parent)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Location section header
+        main_frame = ttk.LabelFrame(parent, text="Location & Time Settings", padding=10)
+        main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Geographic location
         location_frame = ttk.LabelFrame(main_frame, text="Geographic Location", padding=10)
@@ -131,33 +215,27 @@ class SettingsTab:
         ttk.Label(location_frame, text="Latitude:").grid(row=0, column=0, sticky=tk.W, pady=2)
         self.latitude_var = tk.StringVar(value="40.7128")
         ttk.Entry(location_frame, textvariable=self.latitude_var, width=15).grid(row=0, column=1, sticky=tk.W, pady=2)
-        ttk.Label(location_frame, text="degrees (positive = North)").grid(row=0, column=2, sticky=tk.W, pady=2)
+        ttk.Label(location_frame, text="degrees (+ = North)").grid(row=0, column=2, sticky=tk.W, pady=2)
         
         # Longitude
         ttk.Label(location_frame, text="Longitude:").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.longitude_var = tk.StringVar(value="-74.0060")
         ttk.Entry(location_frame, textvariable=self.longitude_var, width=15).grid(row=1, column=1, sticky=tk.W, pady=2)
-        ttk.Label(location_frame, text="degrees (positive = East)").grid(row=1, column=2, sticky=tk.W, pady=2)
-        
-        # Elevation
-        ttk.Label(location_frame, text="Elevation:").grid(row=2, column=0, sticky=tk.W, pady=2)
-        self.elevation_var = tk.StringVar(value="10")
-        ttk.Entry(location_frame, textvariable=self.elevation_var, width=15).grid(row=2, column=1, sticky=tk.W, pady=2)
-        ttk.Label(location_frame, text="meters above sea level").grid(row=2, column=2, sticky=tk.W, pady=2)
-        
+        ttk.Label(location_frame, text="degrees (+ = East)").grid(row=1, column=2, sticky=tk.W, pady=2)
+                
         # City/Location name
         ttk.Label(location_frame, text="Location Name:").grid(row=3, column=0, sticky=tk.W, pady=2)
         self.location_name_var = tk.StringVar(value="New York, NY")
-        ttk.Entry(location_frame, textvariable=self.location_name_var, width=30).grid(row=3, column=1, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Entry(location_frame, textvariable=self.location_name_var, width=25).grid(row=3, column=1, columnspan=2, sticky=tk.W, pady=2)
         
         # Time zone settings
         timezone_frame = ttk.LabelFrame(main_frame, text="Time Zone", padding=10)
-        timezone_frame.pack(fill=tk.X, pady=(0, 10))
+        timezone_frame.pack(fill=tk.X)
         
         # Time zone
         ttk.Label(timezone_frame, text="Time Zone:").grid(row=0, column=0, sticky=tk.W, pady=2)
         self.timezone_var = tk.StringVar(value="America/New_York")
-        timezone_combo = ttk.Combobox(timezone_frame, textvariable=self.timezone_var, width=25,
+        timezone_combo = ttk.Combobox(timezone_frame, textvariable=self.timezone_var, width=20,
                                     values=["America/New_York", "America/Chicago", "America/Denver", 
                                            "America/Los_Angeles", "Europe/London", "Europe/Paris",
                                            "Asia/Tokyo", "Australia/Sydney"])
@@ -169,17 +247,18 @@ class SettingsTab:
         ttk.Entry(timezone_frame, textvariable=self.utc_offset_var, width=10).grid(row=1, column=1, sticky=tk.W, pady=2)
         ttk.Label(timezone_frame, text="hours").grid(row=1, column=2, sticky=tk.W, pady=2)
         
-        # Auto-detect
+        # Auto-detect button (smaller)
         ttk.Button(
             timezone_frame, 
-            text="Auto-detect Location", 
+            text="Auto-detect", 
             command=self.auto_detect_location
-        ).grid(row=2, column=0, columnspan=3, pady=10)
+        ).grid(row=2, column=0, columnspan=2, pady=8, sticky=tk.W)
         
     def create_default_settings(self, parent):
         """Create default capture and session settings."""
-        main_frame = ttk.Frame(parent)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Defaults section header
+        main_frame = ttk.LabelFrame(parent, text="Default Settings", padding=10)
+        main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Default capture settings
         capture_frame = ttk.LabelFrame(main_frame, text="Default Capture Settings", padding=10)
@@ -210,7 +289,7 @@ class SettingsTab:
         
         # Timing settings
         timing_frame = ttk.LabelFrame(main_frame, text="Default Timing Settings", padding=10)
-        timing_frame.pack(fill=tk.X, pady=(0, 10))
+        timing_frame.pack(fill=tk.X)
         
         # Wait between sessions
         ttk.Label(timing_frame, text="Wait Between Sessions:").grid(row=0, column=0, sticky=tk.W, pady=2)
@@ -232,8 +311,9 @@ class SettingsTab:
         
     def create_advanced_settings(self, parent):
         """Create advanced application settings."""
-        main_frame = ttk.Frame(parent)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Advanced section header
+        main_frame = ttk.LabelFrame(parent, text="Advanced Settings", padding=10)
+        main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Logging settings
         logging_frame = ttk.LabelFrame(main_frame, text="Logging", padding=10)
@@ -274,7 +354,7 @@ class SettingsTab:
         
         # History settings
         history_frame = ttk.LabelFrame(main_frame, text="History Settings", padding=10)
-        history_frame.pack(fill=tk.X, pady=(0, 10))
+        history_frame.pack(fill=tk.X, pady=(0, 0))
         
         # Day change hour
         ttk.Label(history_frame, text="Day change hour:").grid(row=0, column=0, sticky=tk.W, pady=2)
@@ -282,153 +362,145 @@ class SettingsTab:
         day_change_spinbox = tk.Spinbox(history_frame, textvariable=self.day_change_hour_var, 
                                        from_=0, to=23, width=5, format="%02.0f")
         day_change_spinbox.grid(row=0, column=1, sticky=tk.W, pady=2)
-        ttk.Label(history_frame, text="(24-hour format, default 18 = 6 PM)").grid(row=0, column=2, sticky=tk.W, pady=2, padx=(5, 0))
+        ttk.Label(history_frame, text="(24-hour format)").grid(row=0, column=2, sticky=tk.W, pady=2, padx=(5, 0))
         
-        # Explanation
+        # Explanation (smaller font)
         ttk.Label(history_frame, 
-                 text="Sessions before this hour are recorded to the previous day's history file.",
-                 font=("Arial", 8)).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+                 text="Sessions before this hour go to previous day's history",
+                 font=("Arial", 8)).grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(2, 0))
         
         # Backup settings
         backup_frame = ttk.LabelFrame(main_frame, text="Backup", padding=10)
-        backup_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # Auto-backup
-        self.auto_backup_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            backup_frame, 
-            text="Auto-backup sessions", 
-            variable=self.auto_backup_var
-        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=2)
-        
-        # Backup location
-        ttk.Label(backup_frame, text="Backup Location:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.backup_location_var = tk.StringVar()
-        ttk.Entry(backup_frame, textvariable=self.backup_location_var, width=40).grid(row=1, column=1, sticky=tk.W, pady=2)
-        ttk.Button(
-            backup_frame, 
-            text="Browse", 
-            command=self.browse_backup_location
-        ).grid(row=1, column=2, padx=(5, 0), pady=2)
-        
+        backup_frame.pack(fill=tk.X)
+                
     def load_settings(self):
         """Load settings from configuration."""
         config = self.config_manager.get_all_settings()
         
-        # Telescope settings
-        telescope = config.get("telescope", {})
-        self.dwarf_ip_var.set(telescope.get("ip", "192.168.4.1"))
-        self.port_var.set(str(telescope.get("port", 80)))
-        self.timeout_var.set(str(telescope.get("timeout", 10)))
-        self.auto_connect_var.set(telescope.get("auto_connect", True))
-        self.camera_model_var.set(telescope.get("camera_model", "Dwarf3"))
-        self.mount_type_var.set(telescope.get("mount_type", "Alt-Az"))
+        # All settings from CONFIG section
+        config_section = config.get("CONFIG", {})
+        self.dwarf_ip_var.set(config_section.get("telescope_ip", "192.168.4.1"))
+        self.port_var.set(str(config_section.get("telescope_port", 80)))
+        self.timeout_var.set(str(config_section.get("telescope_timeout", 10)))
+        self.auto_connect_var.set(config_section.get("auto_connect", True))
+        self.stellarium_ip_var.set(config_section.get("stellarium_ip", "192.168.1.20"))
+        self.stellarium_port_var.set(str(config_section.get("stellarium_port", 8090)))
         
-        # Location settings
-        location = config.get("location", {})
-        self.latitude_var.set(str(location.get("latitude", 40.7128)))
-        self.longitude_var.set(str(location.get("longitude", -74.0060)))
-        self.elevation_var.set(str(location.get("elevation", 10)))
-        self.location_name_var.set(location.get("name", "New York, NY"))
-        self.timezone_var.set(location.get("timezone", "America/New_York"))
-        self.utc_offset_var.set(str(location.get("utc_offset", -5)))
+        # Device settings from CONFIG section
+        self.camera_model_var.set(config_section.get("camera_model", "Dwarf3"))
+        self.mount_type_var.set(config_section.get("mount_type", "Equatorial"))
         
-        # Default settings
-        defaults = config.get("defaults", {})
-        self.default_frames_var.set(str(defaults.get("frame_count", 50)))
-        self.default_exposure_var.set(str(defaults.get("exposure_time", 30)))
-        self.default_gain_var.set(str(defaults.get("gain", 100)))
-        self.default_binning_var.set(defaults.get("binning", "1x1"))
-        self.session_wait_var.set(str(defaults.get("session_wait", 60)))
-        self.default_settling_var.set(str(defaults.get("settling_time", 10)))
-        self.default_focus_timeout_var.set(str(defaults.get("focus_timeout", 300)))
+        # Location settings from CONFIG section
+        self.latitude_var.set(str(config_section.get("latitude", 40.7128)))
+        self.longitude_var.set(str(config_section.get("longitude", -74.0060)))
+        self.location_name_var.set(config_section.get("address", "New York, NY"))
+        self.timezone_var.set(config_section.get("timezone", "America/New_York"))
+        self.utc_offset_var.set(str(config_section.get("utc_offset", -5)))
         
-        # Advanced settings
-        advanced = config.get("advanced", {})
-        self.log_level_var.set(advanced.get("log_level", "INFO"))
-        self.log_to_file_var.set(advanced.get("log_to_file", True))
-        self.auto_archive_var.set(advanced.get("auto_archive", True))
-        self.archive_days_var.set(str(advanced.get("archive_days", 30)))
-        self.auto_backup_var.set(advanced.get("auto_backup", False))
-        self.backup_location_var.set(advanced.get("backup_location", ""))
+        # Default settings from CONFIG section
+        self.default_frames_var.set(str(config_section.get("count", 50)))
+        self.default_exposure_var.set(str(config_section.get("exposure", 30)))
+        self.default_gain_var.set(str(config_section.get("gain", 100)))
         
-        # History settings
-        history = config.get("history", {})
-        self.day_change_hour_var.set(str(history.get("day_change_hour", 18)))
+        # Convert binning value
+        binning_val = config_section.get("binning", 0)
+        if binning_val == 0:
+            self.default_binning_var.set("1x1")
+        else:
+            self.default_binning_var.set(f"{binning_val}x{binning_val}")
         
-    def save_settings(self):
-        """Save current settings to configuration."""
+        self.session_wait_var.set(str(config_section.get("session_wait", 60)))
+        self.default_settling_var.set(str(config_section.get("settling_time", 10)))
+        self.default_focus_timeout_var.set(str(config_section.get("focus_timeout", 300)))
+        
+        # Advanced settings from CONFIG section
+        self.log_level_var.set(config_section.get("log_level", "INFO"))
+        self.log_to_file_var.set(config_section.get("log_to_file", True))
+        self.auto_archive_var.set(config_section.get("auto_archive", True))
+        self.archive_days_var.set(str(config_section.get("archive_days", 30)))
+        
+        # History settings from CONFIG section
+        self.day_change_hour_var.set(str(config_section.get("day_change_hour", 18)))
+        
+    def save_settings_internal(self):
+        """Internal method to save settings without user dialogs."""
         try:
-            config = {
-                "telescope": {
-                    "ip": self.dwarf_ip_var.get(),
-                    "port": int(self.port_var.get()),
-                    "timeout": int(self.timeout_var.get()),
-                    "auto_connect": self.auto_connect_var.get(),
-                    "camera_model": self.camera_model_var.get(),
-                    "mount_type": self.mount_type_var.get()
-                },
-                "location": {
-                    "latitude": float(self.latitude_var.get()),
-                    "longitude": float(self.longitude_var.get()),
-                    "elevation": float(self.elevation_var.get()),
-                    "name": self.location_name_var.get(),
-                    "timezone": self.timezone_var.get(),
-                    "utc_offset": float(self.utc_offset_var.get())
-                },
-                "defaults": {
-                    "frame_count": int(self.default_frames_var.get()),
-                    "exposure_time": float(self.default_exposure_var.get()),
-                    "gain": int(self.default_gain_var.get()),
-                    "binning": self.default_binning_var.get(),
-                    "session_wait": int(self.session_wait_var.get()),
-                    "settling_time": int(self.default_settling_var.get()),
-                    "focus_timeout": int(self.default_focus_timeout_var.get())
-                },
-                "advanced": {
-                    "log_level": self.log_level_var.get(),
-                    "log_to_file": self.log_to_file_var.get(),
-                    "auto_archive": self.auto_archive_var.get(),
-                    "archive_days": int(self.archive_days_var.get()),
-                    "auto_backup": self.auto_backup_var.get(),
-                    "backup_location": self.backup_location_var.get()
-                },
-                "history": {
-                    "day_change_hour": int(self.day_change_hour_var.get())
-                }
+            # All settings go to CONFIG section
+            config_settings = {
+                # Telescope settings
+                "telescope_ip": self.dwarf_ip_var.get(),
+                "telescope_port": int(self.port_var.get()),
+                "telescope_timeout": int(self.timeout_var.get()),
+                "auto_connect": self.auto_connect_var.get(),
+                "stellarium_ip": self.stellarium_ip_var.get(),
+                "stellarium_port": int(self.stellarium_port_var.get()),
+                
+                # Device settings
+                "camera_model": self.camera_model_var.get(),
+                "mount_type": self.mount_type_var.get(),
+                "device_type": "Dwarf 3 Tele Lens",
+                
+                # Location settings
+                "latitude": float(self.latitude_var.get()),
+                "longitude": float(self.longitude_var.get()),
+                "address": self.location_name_var.get(),
+                "timezone": self.timezone_var.get(),
+                "utc_offset": int(self.utc_offset_var.get()),
+                
+                # Default capture settings
+                "count": int(self.default_frames_var.get()),
+                "exposure": int(self.default_exposure_var.get()),
+                "gain": int(self.default_gain_var.get()),
+                "session_wait": int(self.session_wait_var.get()),
+                "settling_time": int(self.default_settling_var.get()),
+                "focus_timeout": int(self.default_focus_timeout_var.get()),
+                
+                # Advanced settings
+                "log_level": self.log_level_var.get(),
+                "log_to_file": self.log_to_file_var.get(),
+                "auto_archive": self.auto_archive_var.get(),
+                "archive_days": int(self.archive_days_var.get()),
+                "day_change_hour": int(self.day_change_hour_var.get())
             }
             
-            self.config_manager.save_settings(config)
-            self.logger.info("Settings saved")
+            # Convert binning setting
+            binning_str = self.default_binning_var.get()
+            if binning_str == "1x1":
+                config_settings["binning"] = 0
+            else:
+                # Extract number from format like "2x2"
+                binning_num = int(binning_str.split('x')[0])
+                config_settings["binning"] = binning_num
             
-        except ValueError as e:
-            messagebox.showerror("Error", f"Invalid input value: {e}")
+            # Save to config manager
+            settings_dict = {
+                "CONFIG": config_settings
+            }
+            
+            self.config_manager.save_settings(settings_dict)
+            
+            # Refresh scheduler settings if available
+            if self.scheduler and hasattr(self.scheduler, 'dwarf_controller'):
+                try:
+                    self.scheduler.dwarf_controller.refresh_settings()
+                    self.logger.debug("Scheduler settings refreshed")
+                except Exception as e:
+                    self.logger.error(f"Failed to refresh scheduler settings: {e}")
+            
+            return True
+            
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save settings: {e}")
             self.logger.error(f"Failed to save settings: {e}")
+            return False
             
     def reset_defaults(self):
         """Reset all settings to defaults."""
         if messagebox.askyesno("Confirm Reset", "Reset all settings to defaults?"):
             self.config_manager.reset_to_defaults()
             self.load_settings()
-            
-    def test_connection(self):
-        """Test connection to telescope."""
-        try:
-            # This would test the actual connection to the Dwarf telescope
-            ip = self.dwarf_ip_var.get()
-            port = int(self.port_var.get())
-            timeout = int(self.timeout_var.get())
-            
-            # Placeholder for actual connection test
-            messagebox.showinfo("Connection Test", 
-                              f"Testing connection to {ip}:{port}...\n"
-                              f"(Connection test not implemented yet)")
-            
-        except Exception as e:
-            messagebox.showerror("Connection Error", f"Connection test failed: {e}")
-            
+            # Auto-save the reset values
+            self.auto_save_settings()
+                        
     def auto_detect_location(self):
         """Auto-detect geographic location."""
         # This would use a geolocation service
@@ -436,8 +508,3 @@ class SettingsTab:
                           "Auto-detection not implemented yet.\n"
                           "Please enter coordinates manually.")
         
-    def browse_backup_location(self):
-        """Browse for backup location."""
-        folder = filedialog.askdirectory(title="Select Backup Location")
-        if folder:
-            self.backup_location_var.set(folder)

@@ -1,3 +1,0 @@
-date,time,session_name,target_name,status,ra,dec,frame_count,frames_captured,exposure_time,total_exposure,gain,binning,filter,duration,file_size,auto_focus,plate_solve,auto_guide,temperature,humidity,seeing,notes,error_message
-2025-01-02,19:30:00,M42_Orion_Session,M42 Orion Nebula,Completed,,,0,58,0,0,,,,3.5 hours,450 MB,False,False,False,-10°C,45%,2.1 arcsec,"Clear night, excellent conditions",
-2025-01-03,20:15:00,M31_Andromeda_Session,M31 Andromeda Galaxy,Completed,,,0,40,0,0,,,,4.2 hours,680 MB,False,False,False,-8°C,38%,1.8 arcsec,Perfect night for galaxy imaging,

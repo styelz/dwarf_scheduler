@@ -159,12 +159,13 @@ class DwarfController:
 
             max_retries = 3
             retry_count = 0
+            callback_invoked = False  # Track if callback has been invoked
 
             try:
                 self.connecting = True
 
                 with self._operation_lock:
-                    if self.connected and self._check_connection_keepalive():
+                    if self.connected:
                         self.logger.debug("Connection already established and healthy")
                         self._invoke_callback(callback, True, "Connection already established")
                         return True
@@ -188,45 +189,45 @@ class DwarfController:
                                 self.connected = True
                                 self.last_keepalive = time.time()
                                 self.logger.info("Successfully connected to Dwarf3")
-                                self._invoke_callback(callback, True, "Connected successfully")
+                                if not callback_invoked:
+                                    self._invoke_callback(callback, True, "Connected successfully")
+                                    callback_invoked = True
                                 return True
                             else:
-                                if self.slave_mode_detected:
-                                    self.logger.error("SLAVE MODE detected - telescope is being used by another application. Stopping connection attempts.")
-                                    self._invoke_callback(callback, False, "Telescope is in SLAVE MODE - being used by another application")
-                                    return False
-
-                                if retry_count < max_retries:
-                                    self.logger.warning(f"Connection attempt {retry_count} failed, retrying...")
-                                    if not self.connecting:
-                                        self.logger.info("Connection cancelled by user")
-                                        self._invoke_callback(callback, False, "Connection cancelled by user")
-                                        return False
-                                    time.sleep(2)
-                                    continue
-                                else:
-                                    self.logger.error("Failed to establish connection after all retries")
-                                    self._invoke_callback(callback, False, f"Failed to connect after {max_retries} attempts")
-                                    return False
+                                self.logger.warning("Connection attempt failed, retrying...")
+                                time.sleep(2)
 
                         except Exception as retry_error:
                             self.logger.warning(f"Connection attempt {retry_count} error: {retry_error}")
-                            if retry_count < max_retries:
-                                time.sleep(2)
-                                continue
-                            else:
+                            if retry_count >= max_retries:
                                 raise retry_error
+
+                    self.logger.error("Failed to establish connection after all retries")
+                    if not callback_invoked:
+                        self._invoke_callback(callback, False, f"Failed to connect after {max_retries} attempts")
+                        callback_invoked = True
+                    return False
 
             except Exception as e:
                 self.logger.error(f"Failed to connect to Dwarf3: {e}")
-                self._invoke_callback(callback, False, f"Connection error: {e}")
+                if not callback_invoked:
+                    self._invoke_callback(callback, False, f"Connection error: {e}")
+                    callback_invoked = True
                 return False
+
             finally:
                 self.connecting = False
     
     def _connect_via_dwarf_api(self, timeout: int = 10) -> bool:
         """Connect using dwarf_python_api."""
         try:
+            # Use safe_getstatus to check if the telescope is reachable
+            if not self._safe_getstatus(timeout):
+                self.logger.error("Telescope is not reachable")
+                return False
+
+            self.logger.info("Telescope is reachable")
+
             # Set up configuration for dwarf_python_api
             self._setup_dwarf_api_config()
             
@@ -319,75 +320,6 @@ TIMEOUT_CMD = 160
                 "api_mode": "dwarf_python_api",
                 "status": "Partial connection established"
             }
-    
-    def _test_connection(self, log_level='INFO') -> bool:
-        """Test connection using getDefaultParamsConfig endpoint."""
-        try:
-            # Use a shorter timeout for connection testing to prevent hanging
-            test_timeout = min(self.timeout, 8)  # Cap at 8 seconds for connection test
-            
-            # Use the new endpoint for connection testing
-            url = f"http://{self.ip}:8082/getDefaultParamsConfig"
-            self.logger.debug(f"Testing connection to {url} with timeout {test_timeout}s")
-            
-            response = self.session.get(url, timeout=test_timeout)
-            
-            if response.status_code == 200:
-                data = response.json()
-                # Store telescope info for status display
-                self.telescope_info = self._extract_telescope_info(data)
-                # Use configurable log level - DEBUG for keep-alive, INFO for user-initiated tests
-                if log_level == 'DEBUG':
-                    self.logger.debug("HTTP connection test successful")
-                else:
-                    self.logger.info("HTTP connection test successful")
-                return True
-            else:
-                self.logger.warning(f"Connection test failed with status {response.status_code}")
-                return False
-                
-        except requests.exceptions.Timeout:
-            self.logger.warning(f"Connection test timed out after {test_timeout}s")
-            return False
-        except requests.exceptions.ConnectionError:
-            self.logger.warning("Connection test failed - unable to connect to telescope")
-            return False
-        except Exception as e:
-            self.logger.error(f"Connection test failed: {e}")
-            return False
-    
-    def test_connection(self, callback: Optional[Callable] = None) -> Future:
-        """Public method to test telescope connection (non-blocking)."""
-        return self.executor.submit(self._test_connection_sync, callback)
-    
-    def test_connection_sync(self) -> bool:
-        """Public method to test telescope connection (blocking version)."""
-        return self._test_connection_sync()
-    
-    def _test_connection_sync(self, callback: Optional[Callable] = None) -> bool:
-        """Internal synchronous test connection method - single test only."""
-        try:
-            with self._operation_lock:
-                self.logger.info("Testing telescope connection (single attempt)")
-                
-                result = self._test_connection()
-                
-                if result:
-                    self.logger.info("Connection test successful")
-                    if callback:
-                        callback(True, "Connection test successful")
-                    return True
-                else:
-                    self.logger.warning("Connection test failed")
-                    if callback:
-                        callback(False, "Connection test failed - telescope not responding")
-                    return False
-                
-        except Exception as e:
-            self.logger.error(f"Connection test failed: {e}")
-            if callback:
-                callback(False, f"Connection test error: {e}")
-            return False
     
     def _extract_telescope_info(self, config_data: Dict) -> Dict[str, Any]:
         """Extract useful telescope information from config data."""
@@ -647,28 +579,8 @@ TIMEOUT_CMD = 160
             self.logger.debug("Attempting perform_getstatus (known to be unreliable)")
             
             # Try the call but expect it to fail
-            result = perform_getstatus()
+            return perform_getstatus()
 
-            # If we somehow get a result, check it for issues
-            if result is not False:
-                # Check for SLAVE MODE in result message if result is a dict
-                if self._check_slave_mode_in_response(result=result):
-                    self.logger.warning("SLAVE MODE detected in getstatus result")
-                    return None
-                
-                # Check for telescope timeout (like "No result after 150 seconds")
-                if self._check_telescope_timeout_in_response(result=result):
-                    self.logger.warning("Telescope idle timeout detected - disconnecting gracefully")
-                    self.connected = False
-                    return None
-                
-                self.logger.debug("perform_getstatus returned a result (unexpected success)")
-                return result
-            else:
-                # Null result - this is typical for getstatus
-                self.logger.debug("perform_getstatus returned False (device not found)")
-                return None
-            
         except Exception as e:
             # This is expected since getstatus never works reliably
             self.logger.debug(f"perform_getstatus failed as expected: {e}")
@@ -1133,46 +1045,10 @@ TIMEOUT_CMD = 160
         """Check if telescope is connected, with optional keepalive check."""
         if not self.connected:
             return False
-        
-        # For frequent checks (like in scheduler), use cached connection status
-        # Only do keepalive check occasionally to avoid overwhelming the telescope
-        return self._check_connection_keepalive()
     
     def reset_slave_mode_detection(self):
         """Reset SLAVE MODE detection flag."""
         self.slave_mode_detected = False
-    
-    def _check_connection_keepalive(self) -> bool:
-        """Check connection health with keep-alive pings instead of full reconnection."""
-        current_time = time.time()
-        
-        # Only check if enough time has passed since last keepalive
-        if current_time - self.last_keepalive < self.keepalive_interval:
-            return True  # Don't check too frequently
-        
-        if not self.connected:
-            return False
-        
-        try:
-            # Since perform_getstatus doesn't work reliably, use a simple HTTP status check instead
-            # This is much more reliable for keepalive purposes
-            result = self._test_connection(log_level='DEBUG')
-            if result:
-                self.last_keepalive = current_time
-                self.logger.debug("Connection keepalive successful via HTTP check")
-                return True
-            else:
-                self.logger.warning("Connection keepalive failed - connection may be lost")
-                # Don't immediately disconnect on keepalive failure - could be temporary
-                # Only disconnect if we can't reach the telescope at all
-                return True  # Keep connection alive for now
-                    
-        except Exception as e:
-            self.logger.debug(f"Connection keepalive check failed: {e}")
-            # Don't disconnect on keepalive errors - just log them
-            return True  # Keep connection alive unless we have specific errors
-            
-        return True  # Default to keeping connection alive
     
     def _check_slave_mode_in_response(self, result=None, exception=None) -> bool:
         """Check if SLAVE MODE is detected in API response or exception."""

@@ -7,6 +7,7 @@ from tkinter import ttk, messagebox
 import logging
 import os
 import datetime
+import threading  # Ensure threading is imported at the top of the file
 from core.scheduler import Scheduler
 from core.session_manager import SessionManager
 
@@ -498,7 +499,7 @@ Notes:
                 else:
                     # Disconnected - show connect option
                     self.connection_button.config(text="⚡ Connect", style="Disconnected.TButton", state=tk.NORMAL)
-                    
+               
         except Exception as e:
             self.logger.error(f"Failed to update button states: {e}")
             
@@ -506,13 +507,13 @@ Notes:
         """Toggle telescope connection (connect/disconnect)."""
         try:
             controller = self.scheduler.dwarf_controller
-            
+
             # Check if we're currently in a connecting state
             if hasattr(controller, 'connecting') and controller.connecting:
                 # Cancel connection attempt
                 self.add_log_message("INFO", "Cancelling connection attempt...")
                 self.connection_button.config(text="Cancelling...", state=tk.DISABLED)
-                
+
                 def cancel_callback():
                     """Handle connection cancellation."""
                     try:
@@ -526,15 +527,14 @@ Notes:
                             self.add_log_message("ERROR", f"Error cancelling connection: {e}"),
                             self.update_button_states()
                         ])
-                
-                import threading
+
                 threading.Thread(target=cancel_callback, daemon=True).start()
-                
+
             elif controller.is_connected():
                 # Disconnect
                 self.add_log_message("INFO", "Disconnecting from telescope...")
                 self.connection_button.config(text="Disconnecting...", state=tk.DISABLED)
-                
+
                 def disconnect_callback():
                     """Handle disconnect completion."""
                     try:
@@ -548,25 +548,25 @@ Notes:
                             self.add_log_message("ERROR", f"Error during disconnect: {e}"),
                             self.update_button_states()
                         ])
-                
-                # Run disconnect in background to avoid blocking GUI
-                import threading
+
                 threading.Thread(target=disconnect_callback, daemon=True).start()
-                
+
             else:
                 # Connect
                 self.add_log_message("INFO", "Connecting to telescope...")
-                # Change button to show "Cancel" during connection attempt
                 self.connection_button.config(text="✖ Cancel", style="Disconnected.TButton", state=tk.NORMAL)
-                
+
                 def connect_callback(success, message):
                     """Handle connection result."""
                     self.frame.after(0, lambda: [
                         self._handle_connection_result(success, message)
-                    ])                  
-                
+                    ])
+
                 # Use threaded connection with reasonable timeout (3 retries * ~10s each = ~30s max)
-                controller.connect(timeout=10, callback=connect_callback)
+                threading.Thread(
+                    target=lambda: controller.connect(timeout=10, callback=connect_callback),
+                    daemon=True
+                ).start()
 
         except Exception as e:
             self.add_log_message("ERROR", f"Error toggling connection: {e}")
@@ -580,10 +580,10 @@ Notes:
                 self.add_log_message("INFO", f"Successfully connected: {message}")
             else:
                 self.add_log_message("ERROR", f"Connection failed: {message}")
-                
+
             # Update button states regardless of result
             self.update_button_states()
-            
+
         except Exception as e:
             self.logger.error(f"Error handling connection result: {e}")
             self.add_log_message("ERROR", f"Error handling connection: {e}")
@@ -911,4 +911,4 @@ Notes:
             
         # Refresh the schedule display to show updated status
         self.refresh_schedule()
-        
+

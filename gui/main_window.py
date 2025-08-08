@@ -210,22 +210,22 @@ class MainWindow:
             
     def on_closing(self):
         """Handle window closing event."""
-        if messagebox.askokcancel("Quit", "Do you want to quit?"):
-            self.logger.info("Application closing")
-            
-            # Clean up scheduler and telescope controller
-            try:
-                if hasattr(self, 'schedule_tab') and hasattr(self.schedule_tab, 'scheduler'):
-                    scheduler = self.schedule_tab.scheduler
-                    if hasattr(scheduler, 'dwarf_controller'):
-                        self.logger.info("Cleaning up telescope controller...")
-                        scheduler.dwarf_controller.cleanup()
-                    if hasattr(scheduler, 'stop'):
-                        scheduler.stop()
-            except Exception as e:
-                self.logger.error(f"Error during cleanup: {e}")
-            
-            self.root.destroy()
+        # if messagebox.askokcancel("Quit", "Do you want to quit?"):
+        self.logger.info("Application closing")
+        
+        # Clean up scheduler and telescope controller
+        try:
+            if hasattr(self, 'schedule_tab') and hasattr(self.schedule_tab, 'scheduler'):
+                scheduler = self.schedule_tab.scheduler
+                if hasattr(scheduler, 'dwarf_controller'):
+                    self.logger.info("Cleaning up telescope controller...")
+                    scheduler.dwarf_controller.cleanup()
+                if hasattr(scheduler, 'stop'):
+                    scheduler.stop()
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {e}")
+        
+        self.root.destroy()
             
     def check_orphaned_sessions_on_startup(self):
         """Check for orphaned running sessions and show recovery dialog."""
@@ -346,7 +346,7 @@ class MainWindow:
                 # Get the telescope controller and attempt connection
                 if hasattr(self, 'schedule_tab') and hasattr(self.schedule_tab, 'scheduler'):
                     scheduler = self.schedule_tab.scheduler
-                    
+                    self.logger.info("Successfully connected to Dwarf3")
                     def auto_connect_callback(success, message):
                         """Callback for auto-connect attempt."""
                         if success:

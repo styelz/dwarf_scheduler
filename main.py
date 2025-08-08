@@ -10,6 +10,7 @@ import logging
 from gui.main_window import MainWindow
 from core.config_manager import ConfigManager
 import os
+from config import DEBUG
 
 def setup_logging():
     """Set up logging configuration."""
@@ -17,8 +18,11 @@ def setup_logging():
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     
+    # Determine logging level based on DEBUG setting
+    log_level = logging.DEBUG if DEBUG else logging.INFO
+
     logging.basicConfig(
-        level=logging.INFO,
+        level=log_level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.FileHandler(os.path.join(log_dir, 'dwarf_scheduler.log')),

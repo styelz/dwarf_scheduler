@@ -43,7 +43,7 @@ class SettingsTab:
         
         # Location settings
         vars_to_watch.extend([
-            self.latitude_var, self.longitude_var, self.elevation_var,
+            self.latitude_var, self.longitude_var,
             self.location_name_var, self.timezone_var, self.utc_offset_var
         ])
         
@@ -52,12 +52,6 @@ class SettingsTab:
             self.default_frames_var, self.default_exposure_var, self.default_gain_var,
             self.default_binning_var, self.session_wait_var, self.default_settling_var,
             self.default_focus_timeout_var
-        ])
-        
-        # Advanced settings
-        vars_to_watch.extend([
-            self.log_level_var, self.log_to_file_var, self.auto_archive_var,
-            self.archive_days_var, self.auto_backup_var, self.backup_location_var
         ])
         
         # History settings
@@ -134,12 +128,9 @@ class SettingsTab:
         self.create_default_settings(right_column)
         self.create_advanced_settings(right_column)
         
-        # Only Reset button at the bottom of the main frame (not scrollable)
-        button_frame = ttk.Frame(self.frame)
-        button_frame.pack(fill=tk.X, padx=5, pady=5)
-        
+        right_column.pack(fill=tk.X, padx=5, pady=5)        
         ttk.Button(
-            button_frame, 
+            right_column, 
             text="Reset to Defaults", 
             command=self.reset_defaults
         ).pack(side=tk.LEFT)
@@ -147,7 +138,7 @@ class SettingsTab:
     def create_telescope_settings(self, parent):
         """Create telescope connection settings."""
         # Telescope section header
-        main_frame = ttk.LabelFrame(parent, text="Telescope Settings", padding=15)
+        main_frame = ttk.LabelFrame(parent, text="Telescope Settings", padding=10)
         main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Connection settings
@@ -180,7 +171,7 @@ class SettingsTab:
         
         # Stellarium settings
         stellarium_frame = ttk.LabelFrame(main_frame, text="Stellarium Remote", padding=10)
-        stellarium_frame.pack(fill=tk.X, pady=(10, 0))
+        stellarium_frame.pack(fill=tk.X, pady=(0, 0))
         
         # Stellarium IP Address
         ttk.Label(stellarium_frame, text="Stellarium IP:").grid(row=0, column=0, sticky=tk.W, pady=2)
@@ -213,7 +204,7 @@ class SettingsTab:
     def create_location_settings(self, parent):
         """Create location and time settings."""
         # Location section header
-        main_frame = ttk.LabelFrame(parent, text="Location & Time Settings", padding=15)
+        main_frame = ttk.LabelFrame(parent, text="Location & Time Settings", padding=10)
         main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Geographic location
@@ -231,13 +222,7 @@ class SettingsTab:
         self.longitude_var = tk.StringVar(value="-74.0060")
         ttk.Entry(location_frame, textvariable=self.longitude_var, width=15).grid(row=1, column=1, sticky=tk.W, pady=2)
         ttk.Label(location_frame, text="degrees (+ = East)").grid(row=1, column=2, sticky=tk.W, pady=2)
-        
-        # Elevation
-        ttk.Label(location_frame, text="Elevation:").grid(row=2, column=0, sticky=tk.W, pady=2)
-        self.elevation_var = tk.StringVar(value="10")
-        ttk.Entry(location_frame, textvariable=self.elevation_var, width=15).grid(row=2, column=1, sticky=tk.W, pady=2)
-        ttk.Label(location_frame, text="meters ASL").grid(row=2, column=2, sticky=tk.W, pady=2)
-        
+                
         # City/Location name
         ttk.Label(location_frame, text="Location Name:").grid(row=3, column=0, sticky=tk.W, pady=2)
         self.location_name_var = tk.StringVar(value="New York, NY")
@@ -272,7 +257,7 @@ class SettingsTab:
     def create_default_settings(self, parent):
         """Create default capture and session settings."""
         # Defaults section header
-        main_frame = ttk.LabelFrame(parent, text="Default Settings", padding=15)
+        main_frame = ttk.LabelFrame(parent, text="Default Settings", padding=10)
         main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Default capture settings
@@ -327,7 +312,7 @@ class SettingsTab:
     def create_advanced_settings(self, parent):
         """Create advanced application settings."""
         # Advanced section header
-        main_frame = ttk.LabelFrame(parent, text="Advanced Settings", padding=15)
+        main_frame = ttk.LabelFrame(parent, text="Advanced Settings", padding=10)
         main_frame.pack(fill=tk.X, pady=(0, 10))
         
         # Logging settings
@@ -369,7 +354,7 @@ class SettingsTab:
         
         # History settings
         history_frame = ttk.LabelFrame(main_frame, text="History Settings", padding=10)
-        history_frame.pack(fill=tk.X, pady=(0, 10))
+        history_frame.pack(fill=tk.X, pady=(0, 0))
         
         # Day change hour
         ttk.Label(history_frame, text="Day change hour:").grid(row=0, column=0, sticky=tk.W, pady=2)
@@ -387,122 +372,112 @@ class SettingsTab:
         # Backup settings
         backup_frame = ttk.LabelFrame(main_frame, text="Backup", padding=10)
         backup_frame.pack(fill=tk.X)
-        
-        # Auto-backup
-        self.auto_backup_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            backup_frame, 
-            text="Auto-backup sessions", 
-            variable=self.auto_backup_var
-        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=2)
-        
-        # Backup location
-        ttk.Label(backup_frame, text="Backup Location:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.backup_location_var = tk.StringVar()
-        ttk.Entry(backup_frame, textvariable=self.backup_location_var, width=30).grid(row=1, column=1, sticky=tk.W, pady=2)
-        ttk.Button(
-            backup_frame, 
-            text="Browse", 
-            command=self.browse_backup_location
-        ).grid(row=1, column=2, padx=(5, 0), pady=2)
-        
+                
     def load_settings(self):
         """Load settings from configuration."""
         config = self.config_manager.get_all_settings()
         
-        # Telescope settings
-        telescope = config.get("telescope", {})
-        self.dwarf_ip_var.set(telescope.get("ip", "192.168.4.1"))
-        self.port_var.set(str(telescope.get("port", 80)))
-        self.timeout_var.set(str(telescope.get("timeout", 10)))
-        self.auto_connect_var.set(telescope.get("auto_connect", True))
-        self.camera_model_var.set(telescope.get("camera_model", "Dwarf3"))
-        self.mount_type_var.set(telescope.get("mount_type", "Alt-Az"))
+        # All settings from CONFIG section
+        config_section = config.get("CONFIG", {})
+        self.dwarf_ip_var.set(config_section.get("telescope_ip", "192.168.4.1"))
+        self.port_var.set(str(config_section.get("telescope_port", 80)))
+        self.timeout_var.set(str(config_section.get("telescope_timeout", 10)))
+        self.auto_connect_var.set(config_section.get("auto_connect", True))
+        self.stellarium_ip_var.set(config_section.get("stellarium_ip", "192.168.1.20"))
+        self.stellarium_port_var.set(str(config_section.get("stellarium_port", 8090)))
         
-        # Stellarium settings
-        stellarium = config.get("stellarium", {})
-        self.stellarium_ip_var.set(stellarium.get("ip", "192.168.1.20"))
-        self.stellarium_port_var.set(str(stellarium.get("port", 8090)))
+        # Device settings from CONFIG section
+        self.camera_model_var.set(config_section.get("camera_model", "Dwarf3"))
+        self.mount_type_var.set(config_section.get("mount_type", "Equatorial"))
         
-        # Location settings
-        location = config.get("location", {})
-        self.latitude_var.set(str(location.get("latitude", 40.7128)))
-        self.longitude_var.set(str(location.get("longitude", -74.0060)))
-        self.elevation_var.set(str(location.get("elevation", 10)))
-        self.location_name_var.set(location.get("name", "New York, NY"))
-        self.timezone_var.set(location.get("timezone", "America/New_York"))
-        self.utc_offset_var.set(str(location.get("utc_offset", -5)))
+        # Location settings from CONFIG section
+        self.latitude_var.set(str(config_section.get("latitude", 40.7128)))
+        self.longitude_var.set(str(config_section.get("longitude", -74.0060)))
+        self.location_name_var.set(config_section.get("address", "New York, NY"))
+        self.timezone_var.set(config_section.get("timezone", "America/New_York"))
+        self.utc_offset_var.set(str(config_section.get("utc_offset", -5)))
         
-        # Default settings
-        defaults = config.get("defaults", {})
-        self.default_frames_var.set(str(defaults.get("frame_count", 50)))
-        self.default_exposure_var.set(str(defaults.get("exposure_time", 30)))
-        self.default_gain_var.set(str(defaults.get("gain", 100)))
-        self.default_binning_var.set(defaults.get("binning", "1x1"))
-        self.session_wait_var.set(str(defaults.get("session_wait", 60)))
-        self.default_settling_var.set(str(defaults.get("settling_time", 10)))
-        self.default_focus_timeout_var.set(str(defaults.get("focus_timeout", 300)))
+        # Default settings from CONFIG section
+        self.default_frames_var.set(str(config_section.get("count", 50)))
+        self.default_exposure_var.set(str(config_section.get("exposure", 30)))
+        self.default_gain_var.set(str(config_section.get("gain", 100)))
         
-        # Advanced settings
-        advanced = config.get("advanced", {})
-        self.log_level_var.set(advanced.get("log_level", "INFO"))
-        self.log_to_file_var.set(advanced.get("log_to_file", True))
-        self.auto_archive_var.set(advanced.get("auto_archive", True))
-        self.archive_days_var.set(str(advanced.get("archive_days", 30)))
-        self.auto_backup_var.set(advanced.get("auto_backup", False))
-        self.backup_location_var.set(advanced.get("backup_location", ""))
+        # Convert binning value
+        binning_val = config_section.get("binning", 0)
+        if binning_val == 0:
+            self.default_binning_var.set("1x1")
+        else:
+            self.default_binning_var.set(f"{binning_val}x{binning_val}")
         
-        # History settings
-        history = config.get("history", {})
-        self.day_change_hour_var.set(str(history.get("day_change_hour", 18)))
+        self.session_wait_var.set(str(config_section.get("session_wait", 60)))
+        self.default_settling_var.set(str(config_section.get("settling_time", 10)))
+        self.default_focus_timeout_var.set(str(config_section.get("focus_timeout", 300)))
+        
+        # Advanced settings from CONFIG section
+        self.log_level_var.set(config_section.get("log_level", "INFO"))
+        self.log_to_file_var.set(config_section.get("log_to_file", True))
+        self.auto_archive_var.set(config_section.get("auto_archive", True))
+        self.archive_days_var.set(str(config_section.get("archive_days", 30)))
+        
+        # History settings from CONFIG section
+        self.day_change_hour_var.set(str(config_section.get("day_change_hour", 18)))
         
     def save_settings_internal(self):
         """Internal method to save settings without user dialogs."""
         try:
-            config = {
-                "telescope": {
-                    "ip": self.dwarf_ip_var.get(),
-                    "port": int(self.port_var.get()),
-                    "timeout": int(self.timeout_var.get()),
-                    "auto_connect": self.auto_connect_var.get(),
-                    "camera_model": self.camera_model_var.get(),
-                    "mount_type": self.mount_type_var.get()
-                },
-                "stellarium": {
-                    "ip": self.stellarium_ip_var.get(),
-                    "port": int(self.stellarium_port_var.get())
-                },
-                "location": {
-                    "latitude": float(self.latitude_var.get()),
-                    "longitude": float(self.longitude_var.get()),
-                    "elevation": float(self.elevation_var.get()),
-                    "name": self.location_name_var.get(),
-                    "timezone": self.timezone_var.get(),
-                    "utc_offset": float(self.utc_offset_var.get())
-                },
-                "defaults": {
-                    "frame_count": int(self.default_frames_var.get()),
-                    "exposure_time": float(self.default_exposure_var.get()),
-                    "gain": int(self.default_gain_var.get()),
-                    "binning": self.default_binning_var.get(),
-                    "session_wait": int(self.session_wait_var.get()),
-                    "settling_time": int(self.default_settling_var.get()),
-                    "focus_timeout": int(self.default_focus_timeout_var.get())
-                },
-                "advanced": {
-                    "log_level": self.log_level_var.get(),
-                    "log_to_file": self.log_to_file_var.get(),
-                    "auto_archive": self.auto_archive_var.get(),
-                    "archive_days": int(self.archive_days_var.get()),
-                    "auto_backup": self.auto_backup_var.get(),
-                    "backup_location": self.backup_location_var.get()
-                },
-                "history": {
-                    "day_change_hour": int(self.day_change_hour_var.get())
-                }
+            # All settings go to CONFIG section
+            config_settings = {
+                # Telescope settings
+                "telescope_ip": self.dwarf_ip_var.get(),
+                "telescope_port": int(self.port_var.get()),
+                "telescope_timeout": int(self.timeout_var.get()),
+                "auto_connect": self.auto_connect_var.get(),
+                "stellarium_ip": self.stellarium_ip_var.get(),
+                "stellarium_port": int(self.stellarium_port_var.get()),
+                
+                # Device settings
+                "camera_model": self.camera_model_var.get(),
+                "mount_type": self.mount_type_var.get(),
+                "device_type": "Dwarf 3 Tele Lens",
+                
+                # Location settings
+                "latitude": float(self.latitude_var.get()),
+                "longitude": float(self.longitude_var.get()),
+                "address": self.location_name_var.get(),
+                "timezone": self.timezone_var.get(),
+                "utc_offset": int(self.utc_offset_var.get()),
+                
+                # Default capture settings
+                "count": int(self.default_frames_var.get()),
+                "exposure": int(self.default_exposure_var.get()),
+                "gain": int(self.default_gain_var.get()),
+                "session_wait": int(self.session_wait_var.get()),
+                "settling_time": int(self.default_settling_var.get()),
+                "focus_timeout": int(self.default_focus_timeout_var.get()),
+                
+                # Advanced settings
+                "log_level": self.log_level_var.get(),
+                "log_to_file": self.log_to_file_var.get(),
+                "auto_archive": self.auto_archive_var.get(),
+                "archive_days": int(self.archive_days_var.get()),
+                "day_change_hour": int(self.day_change_hour_var.get())
             }
             
-            self.config_manager.save_settings(config)
+            # Convert binning setting
+            binning_str = self.default_binning_var.get()
+            if binning_str == "1x1":
+                config_settings["binning"] = 0
+            else:
+                # Extract number from format like "2x2"
+                binning_num = int(binning_str.split('x')[0])
+                config_settings["binning"] = binning_num
+            
+            # Save to config manager
+            settings_dict = {
+                "CONFIG": config_settings
+            }
+            
+            self.config_manager.save_settings(settings_dict)
             
             # Refresh scheduler settings if available
             if self.scheduler and hasattr(self.scheduler, 'dwarf_controller'):
@@ -533,8 +508,3 @@ class SettingsTab:
                           "Auto-detection not implemented yet.\n"
                           "Please enter coordinates manually.")
         
-    def browse_backup_location(self):
-        """Browse for backup location."""
-        folder = filedialog.askdirectory(title="Select Backup Location")
-        if folder:
-            self.backup_location_var.set(folder)

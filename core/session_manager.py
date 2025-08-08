@@ -34,54 +34,74 @@ class SessionManager:
                 self.logger.info(f"Created directory: {directory}")
                 
     def generate_session_filename(self, session_data: Dict[str, Any]) -> str:
-        """Generate a filename for the session."""
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        target_name = session_data.get("target_name", "Unknown").replace(" ", "_")
+        """Generate a filename for the session using the session name."""
+        # Use session_name as the filename, sanitized for filesystem
+        session_name = session_data.get("session_name", "Unknown").replace(" ", "_")
         # Remove any invalid filename characters
-        target_name = "".join(c for c in target_name if c.isalnum() or c in "._-")
-        return f"{timestamp}_{target_name}.json"
+        session_name = "".join(c for c in session_name if c.isalnum() or c in "._-")
+        return f"{session_name}.json"
         
-    def save_session(self, session_data: Dict[str, Any], status: str = "Available") -> str:
-        """Save a session to the appropriate directory."""
-        try:
-            # Add metadata
-            session_data["created_date"] = datetime.datetime.now().isoformat()
-            session_data["status"] = status
-            
-            # Add unique session ID if not present
-            if "session_id" not in session_data:
-                import uuid
-                session_data["session_id"] = str(uuid.uuid4())
-            
-            # Generate filename
-            filename = self.generate_session_filename(session_data)
-            
-            # Determine directory based on status
-            if status == "Available":
-                directory = "Sessions/Available"
-            elif status == "ToDo":
-                directory = "Sessions/ToDo"
-            elif status == "Running":
-                directory = "Sessions/Running"
-            elif status == "Done":
-                directory = "Sessions/Done"
-            elif status == "Failed":
-                directory = "Sessions/Failed"
-            else:
-                directory = "Sessions/Available"
+    def load_session_with_filename(self, session_name: str, directory: str = "Sessions/Available"):
+        """
+        Load session data and return (data, filename).
+        """
+        for filename in os.listdir(directory):
+            if filename.endswith('.json'):
+                filepath = os.path.join(directory, filename)
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
+                    if data.get('session_name') == session_name:
+                        return data, filepath
+        return None, None
+
+    def save_session(self, session_data: dict, filename: str = None, status: str = "Available") -> str:
+        """
+        Save session data. If filename is provided, overwrite it.
+        """
+        if filename:
+            with open(filename, 'w') as f:
+                json.dump(session_data, f, indent=2)
+            return filename
+        else:
+            try:
+                # Add metadata
+                session_data["created_date"] = datetime.datetime.now().isoformat()
+                session_data["status"] = status
                 
-            filepath = os.path.join(directory, filename)
-            
-            # Save to file
-            with open(filepath, 'w') as f:
-                json.dump(session_data, f, indent=4)
+                # Add unique session ID if not present
+                if "session_id" not in session_data:
+                    import uuid
+                    session_data["session_id"] = str(uuid.uuid4())
                 
-            self.logger.info(f"Session saved: {filepath}")
-            return filepath
-            
-        except Exception as e:
-            self.logger.error(f"Failed to save session: {e}")
-            raise
+                # Generate filename
+                filename = self.generate_session_filename(session_data)
+                
+                # Determine directory based on status
+                if status == "Available":
+                    directory = "Sessions/Available"
+                elif status == "ToDo":
+                    directory = "Sessions/ToDo"
+                elif status == "Running":
+                    directory = "Sessions/Running"
+                elif status == "Done":
+                    directory = "Sessions/Done"
+                elif status == "Failed":
+                    directory = "Sessions/Failed"
+                else:
+                    directory = "Sessions/Available"
+                    
+                filepath = os.path.join(directory, filename)
+                
+                # Save to file
+                with open(filepath, 'w') as f:
+                    json.dump(session_data, f, indent=4)
+                    
+                self.logger.info(f"Session saved: {filepath}")
+                return filepath
+                
+            except Exception as e:
+                self.logger.error(f"Failed to save session: {e}")
+                raise
             
     def load_session(self, filename: str, directory: str = "Sessions/Available") -> Optional[Dict[str, Any]]:
         """Load a session from file."""
@@ -156,6 +176,8 @@ class SessionManager:
     def move_session(self, filename: str, from_status: str, to_status: str) -> bool:
         """Move a session between directories."""
         try:
+            filename = filename.replace(" ", "_")
+
             if not filename.endswith('.json'):
                 filename += '.json'
                 
@@ -202,9 +224,11 @@ class SessionManager:
     def delete_session(self, filename: str, directory: str = "Sessions/Available") -> bool:
         """Delete a session file."""
         try:
+            filename = filename.replace(" ", "_")
+
             if not filename.endswith('.json'):
                 filename += '.json'
-                
+
             filepath = os.path.join(directory, filename)
             
             if os.path.exists(filepath):

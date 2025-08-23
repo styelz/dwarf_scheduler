@@ -2,6 +2,8 @@
 
 A comprehensive Python GUI application for scheduling and managing Dwarf3 smart telescope observation sessions. Built with a modular architecture featuring dual-mode API communication, automated session management, and an intuitive tabbed interface.
 
+<img width="1204" height="825" alt="image" src="https://github.com/user-attachments/assets/0986ea2e-4159-4313-9e39-f98e6d4f604c" />
+
 ## ✨ Key Features
 
 - **📅 Session Scheduling**: Create, queue, and automatically execute telescope observation sessions
@@ -43,3 +45,4 @@ A comprehensive Python GUI application for scheduling and managing Dwarf3 smart 
    ```
 
 **Happy observing! 🔭✨**
+

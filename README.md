@@ -1,4 +1,5 @@
-# Dwarf3 Telescope Scheduler - WIP (gui testing only at the moment)
+# Dwarf3 Telescope Scheduler - WIP
+# Implementation of APIv2 from stevejcl is being worked on soon
 
 A comprehensive Python GUI application for scheduling and managing Dwarf3 smart telescope observation sessions. Built with a modular architecture featuring dual-mode API communication, automated session management, and an intuitive tabbed interface.
 
@@ -45,6 +46,7 @@ A comprehensive Python GUI application for scheduling and managing Dwarf3 smart 
    ```
 
 **Happy observing! 🔭✨**
+
 
 
 

@@ -112,7 +112,7 @@ class MainWindow:
             self.update_connection_status(False, None)
         
         # Schedule next update
-        self.root.after(5000, self.monitor_scheduler_status)  # Update every 5 seconds
+        self.root.after(15000, self.monitor_scheduler_status)  # Update every 15 seconds
         
     def create_tabs(self):
         """Create all application tabs."""

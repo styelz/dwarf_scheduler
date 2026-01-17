@@ -78,10 +78,7 @@ class ConfigManager:
         try:
             if os.path.exists(self.config_file):
                 self.config.read(self.config_file)
-                self.logger.info("Settings loaded from file")
-                
-                # Migrate old format if needed
-                self._migrate_config_if_needed()
+                self.logger.info("Settings loaded from file")                
             else:
                 self.logger.info("No config file found, using defaults")
                 self.config = self.get_default_settings()
@@ -89,92 +86,6 @@ class ConfigManager:
         except Exception as e:
             self.logger.error(f"Failed to load settings: {e}")
             self.config = self.get_default_settings()
-    
-    def _migrate_config_if_needed(self):
-        """Migrate old configuration format to new format if needed."""
-        try:
-            migration_needed = False
-            
-            # Check if old sections exist (telescope, stellarium, location, defaults, advanced, history, device)
-            old_sections = ['telescope', 'stellarium', 'location', 'defaults', 'advanced', 'history', 'device', 'DEVICE', 'SETTINGS']
-            
-            for section in old_sections:
-                if self.config.has_section(section):
-                    migration_needed = True
-                    break
-            
-            if migration_needed:
-                self.logger.info("Migrating configuration to new format...")
-                
-                # Create new CONFIG section if it doesn't exist
-                if not self.config.has_section('CONFIG'):
-                    self.config.add_section('CONFIG')
-                
-                # Migrate telescope settings to CONFIG
-                if self.config.has_section('telescope'):
-                    for key, value in self.config.items('telescope'):
-                        if key == 'ip':
-                            self.config.set('CONFIG', 'telescope_ip', value)
-                        elif key == 'port':
-                            self.config.set('CONFIG', 'telescope_port', value)
-                        elif key == 'timeout':
-                            self.config.set('CONFIG', 'telescope_timeout', value)
-                        elif key == 'auto_connect':
-                            self.config.set('CONFIG', 'auto_connect', value)
-                
-                # Migrate stellarium settings to CONFIG
-                if self.config.has_section('stellarium'):
-                    for key, value in self.config.items('stellarium'):
-                        if key == 'ip':
-                            self.config.set('CONFIG', 'stellarium_ip', value)
-                        elif key == 'port':
-                            self.config.set('CONFIG', 'stellarium_port', value)
-                
-                # Migrate device settings to CONFIG
-                if self.config.has_section('device') or self.config.has_section('DEVICE'):
-                    device_section = 'device' if self.config.has_section('device') else 'DEVICE'
-                    for key, value in self.config.items(device_section):
-                        self.config.set('CONFIG', key, value)
-                
-                # Migrate location settings to CONFIG
-                if self.config.has_section('location'):
-                    for key, value in self.config.items('location'):
-                        if key == 'name':
-                            self.config.set('CONFIG', 'address', value)
-                        else:
-                            self.config.set('CONFIG', key, value)
-                
-                # Migrate defaults settings to CONFIG
-                if self.config.has_section('defaults'):
-                    for key, value in self.config.items('defaults'):
-                        if key == 'frame_count':
-                            self.config.set('CONFIG', 'count', value)
-                        elif key == 'exposure_time':
-                            self.config.set('CONFIG', 'exposure', value)
-                        else:
-                            self.config.set('CONFIG', key, value)
-                
-                # Migrate advanced settings to CONFIG
-                if self.config.has_section('advanced'):
-                    for key, value in self.config.items('advanced'):
-                        self.config.set('CONFIG', key, value)
-                
-                # Migrate history settings to CONFIG
-                if self.config.has_section('history'):
-                    for key, value in self.config.items('history'):
-                        self.config.set('CONFIG', key, value)
-                
-                # Remove old sections
-                for section in old_sections:
-                    if self.config.has_section(section):
-                        self.config.remove_section(section)
-                
-                # Save migrated config
-                self.save_settings()
-                self.logger.info("Configuration migration completed")
-        
-        except Exception as e:
-            self.logger.error(f"Failed to migrate configuration: {e}")
             
     def save_settings(self, settings=None):
         """Save settings to configuration file."""
@@ -191,10 +102,11 @@ class ConfigManager:
             with open(self.config_file, 'w') as f:
                 self.config.write(f)
             self.logger.info("Settings saved to file")
+            
         except Exception as e:
             self.logger.error(f"Failed to save settings: {e}")
             raise
-            
+    
     def get_setting(self, section: str, key: str, default=None):
         """Get a specific setting value with type conversion."""
         try:

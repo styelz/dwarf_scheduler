@@ -34,12 +34,16 @@ class SessionManager:
                 self.logger.info(f"Created directory: {directory}")
                 
     def generate_session_filename(self, session_data: Dict[str, Any]) -> str:
-        """Generate a filename for the session using the session name."""
-        # Use session_name as the filename, sanitized for filesystem
+        """Generate a filename for the session using timestamp and session name."""
+        # Use session_name as part of the filename, sanitized for filesystem
         session_name = session_data.get("session_name", "Unknown").replace(" ", "_")
         # Remove any invalid filename characters
         session_name = "".join(c for c in session_name if c.isalnum() or c in "._-")
-        return f"{session_name}.json"
+        
+        # Add timestamp to prevent collisions
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        return f"{timestamp}_{session_name}.json"
         
     def load_session_with_filename(self, session_name: str, directory: str = "Sessions/Available"):
         """

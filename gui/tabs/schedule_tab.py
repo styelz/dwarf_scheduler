@@ -875,40 +875,42 @@ Notes:
             self.add_log_message("DEBUG", message)
             
     def on_scheduler_status_update(self, status_message):
-        """Callback for scheduler status updates."""
-        # This method will be called by the scheduler to provide status updates
-        self.add_log_message("INFO", status_message)
-        
-        # Update the scheduler status display and button states
-        self.update_scheduler_status()
-        
-        # Update button states after status changes
-        self.update_button_states()
+        """Callback for scheduler status updates - thread safe."""
+        # Use after() to ensure GUI updates happen on main thread
+        self.frame.after(0, lambda: [
+            self.add_log_message("INFO", status_message),
+            self.update_scheduler_status(),
+            self.update_button_states()
+        ])
         
     def on_scheduler_session_update(self, session_data):
-        """Callback for scheduler session updates."""
-        # This method will be called by the scheduler to provide session updates
+        """Callback for scheduler session updates - thread safe."""
+        # Extract data for thread-safe access
         session_name = session_data.get("target_name", "Unknown")
         status = session_data.get("status", "Unknown")
         
-        if status == "starting":
-            self.log_scheduler_event("session_start", f"{session_name} - Session initialization")
-        elif status == "capturing":
-            frames = session_data.get("frames_captured", 0)
-            total_frames = session_data.get("frame_count", 0)
-            self.log_scheduler_event("info", f"{session_name} - Capturing frame {frames}/{total_frames}")
-        elif status == "completed":
-            frames = session_data.get("frames_captured", 0)
-            duration = session_data.get("duration", "Unknown")
-            self.log_scheduler_event("session_complete", f"{session_name} - {frames} frames captured in {duration}")
-        elif status == "failed":
-            error = session_data.get("error", "Unknown error")
-            self.log_scheduler_event("session_error", f"{session_name} - {error}")
-        elif status == "cancelled":
-            self.log_scheduler_event("warning", f"{session_name} - Session cancelled")
-        else:
-            self.log_scheduler_event("info", f"{session_name} - {status}")
-            
-        # Refresh the schedule display to show updated status
-        self.refresh_schedule()
+        # Use after() to ensure GUI updates happen on main thread
+        def update_gui():
+            if status == "starting":
+                self.log_scheduler_event("session_start", f"{session_name} - Session initialization")
+            elif status == "capturing":
+                frames = session_data.get("frames_captured", 0)
+                total_frames = session_data.get("frame_count", 0)
+                self.log_scheduler_event("info", f"{session_name} - Capturing frame {frames}/{total_frames}")
+            elif status == "completed":
+                frames = session_data.get("frames_captured", 0)
+                duration = session_data.get("duration", "Unknown")
+                self.log_scheduler_event("session_complete", f"{session_name} - {frames} frames captured in {duration}")
+            elif status == "failed":
+                error = session_data.get("error", "Unknown error")
+                self.log_scheduler_event("session_error", f"{session_name} - {error}")
+            elif status == "cancelled":
+                self.log_scheduler_event("warning", f"{session_name} - Session cancelled")
+            else:
+                self.log_scheduler_event("info", f"{session_name} - {status}")
+                
+            # Refresh the schedule display to show updated status
+            self.refresh_schedule()
+        
+        self.frame.after(0, update_gui)
 

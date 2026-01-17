@@ -158,8 +158,20 @@ class Scheduler:
             # Connect to telescope first (or verify existing connection)
             self._update_status("Connecting to telescope")
             if not self.dwarf_controller.is_connected():
-                # Need to establish new connection
-                if not self.dwarf_controller.connect():
+                # Need to establish new connection with proper async handling
+                connection_event = threading.Event()
+                connected = [False]  # Use list for closure
+                
+                def connect_callback(success, msg):
+                    connected[0] = success
+                    connection_event.set()
+                
+                future = self.dwarf_controller.connect(timeout=30, callback=connect_callback)
+                
+                # Wait for connection to complete
+                connection_event.wait(timeout=35)
+                
+                if not connected[0]:
                     # Check if SLAVE MODE was detected
                     if self.dwarf_controller.is_slave_mode_detected():
                         raise Exception("Telescope is in SLAVE MODE - being used by another application")

@@ -92,8 +92,9 @@ class HistoryManager:
                         reader = csv.reader(f)
                         next(reader)  # Skip header
                         session_count = sum(1 for _ in reader)
-                except:
-                    pass
+                except (IOError, csv.Error) as e:
+                    self.logger.warning(f"Could not count sessions in {filename}: {e}")
+                    session_count = 0
                 
                 file_list.append({
                     'filename': filename,

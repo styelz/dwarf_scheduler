@@ -13,7 +13,7 @@ import os
 from config import DEBUG
 
 def setup_logging():
-    """Set up logging configuration."""
+    """Set up logging configuration with rotation."""
     log_dir = "logs"
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
@@ -21,13 +21,24 @@ def setup_logging():
     # Determine logging level based on DEBUG setting
     log_level = logging.DEBUG if DEBUG else logging.INFO
 
+    # Import RotatingFileHandler
+    from logging.handlers import RotatingFileHandler
+    
+    # File handler with rotation (10MB max, keep 5 files)
+    file_handler = RotatingFileHandler(
+        os.path.join(log_dir, 'dwarf_scheduler.log'),
+        maxBytes=10*1024*1024, 
+        backupCount=5
+    )
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+
     logging.basicConfig(
         level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(os.path.join(log_dir, 'dwarf_scheduler.log')),
-            logging.StreamHandler()
-        ]
+        handlers=[file_handler, console_handler]
     )
 
 def main():

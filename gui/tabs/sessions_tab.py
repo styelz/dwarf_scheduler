@@ -11,6 +11,7 @@ import threading
 import requests
 import re
 import logging
+from typing import Dict, Any, Tuple
 from core.session_manager import SessionManager
 
 def parse_coordinate_input(coordinate_str: str, coord_type: str = "ra") -> float:
@@ -170,6 +171,94 @@ class SessionsTab:
 
         self.create_widgets()
         self.refresh_sessions()
+        
+    def validate_session_data(self, session_data: Dict[str, Any]) -> Tuple[bool, str]:
+        """Validate session data before saving."""
+        try:
+            # Validate session name
+            session_name = session_data.get("session_name", "").strip()
+            if not session_name:
+                return False, "Session name is required"
+            
+            # Validate target name
+            target_name = session_data.get("target_name", "").strip()
+            if not target_name:
+                return False, "Target name is required"
+            
+            # Validate coordinates
+            coordinates = session_data.get("coordinates", {})
+            ra = coordinates.get("ra")
+            dec = coordinates.get("dec")
+            
+            if ra is None or dec is None:
+                return False, "Both RA and DEC coordinates are required"
+            
+            try:
+                ra_float = float(ra)
+                dec_float = float(dec)
+                
+                # Validate RA range (0-24 hours)
+                if not (0 <= ra_float <= 24):
+                    return False, "RA must be between 0 and 24 hours"
+                
+                # Validate DEC range (-90 to +90 degrees)
+                if not (-90 <= dec_float <= 90):
+                    return False, "DEC must be between -90 and +90 degrees"
+                    
+            except (ValueError, TypeError):
+                return False, "Invalid coordinate format - must be numeric"
+            
+            # Validate capture settings
+            capture_settings = session_data.get("capture_settings", {})
+            
+            # Validate frame count
+            try:
+                frame_count = int(capture_settings.get("frame_count", 1))
+                if frame_count <= 0:
+                    return False, "Frame count must be greater than 0"
+                if frame_count > 1000:
+                    return False, "Frame count cannot exceed 1000"
+            except (ValueError, TypeError):
+                return False, "Frame count must be a valid number"
+            
+            # Validate exposure time
+            try:
+                exposure_time = float(capture_settings.get("exposure_time", 30.0))
+                if exposure_time <= 0:
+                    return False, "Exposure time must be greater than 0"
+                if exposure_time > 3600:  # 1 hour max
+                    return False, "Exposure time cannot exceed 3600 seconds (1 hour)"
+            except (ValueError, TypeError):
+                return False, "Exposure time must be a valid number"
+            
+            # Validate gain
+            try:
+                gain = int(capture_settings.get("gain", 100))
+                if not (0 <= gain <= 300):  # Typical gain range for most cameras
+                    return False, "Gain must be between 0 and 300"
+            except (ValueError, TypeError):
+                return False, "Gain must be a valid number"
+            
+            # Validate start time
+            start_time_str = session_data.get("start_time")
+            if start_time_str:
+                try:
+                    import datetime
+                    start_time = datetime.datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+                    current_time = datetime.datetime.now()
+                    
+                    # Warn if start time is in the past (but don't fail)
+                    if start_time < current_time:
+                        self.logger.warning(f"Start time {start_time_str} is in the past")
+                        
+                except (ValueError, TypeError):
+                    return False, "Invalid start time format"
+            
+            return True, "Validation successful"
+            
+        except Exception as e:
+            self.logger.error(f"Error during validation: {e}")
+            return False, f"Validation error: {e}"
         
     def create_widgets(self):
         """Create and layout widgets for the sessions tab."""
@@ -569,15 +658,23 @@ class SessionsTab:
         self.focus_timeout_var.set("300")
         
     def save_session(self):
-        """Save current session."""
+        """Save current session with validation."""
         if not self.session_name_var.get():
             messagebox.showerror("Error", "Session name is required!")
             return
             
         session_data = self.get_session_data()
+        
+        # Validate session data
+        is_valid, validation_message = self.validate_session_data(session_data)
+        if not is_valid:
+            messagebox.showerror("Validation Error", validation_message)
+            return
+        
         try:
             self.session_manager.save_session(session_data)
             self.refresh_sessions()
+            messagebox.showinfo("Success", "Session saved successfully!")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save session: {e}")
             
@@ -708,12 +805,19 @@ class SessionsTab:
         self.on_session_select(None)
         
     def add_to_schedule(self):
-        """Add current session to schedule."""
+        """Add current session to schedule with validation."""
         if not self.session_name_var.get():
             messagebox.showerror("Error", "Please create or select a session first!")
             return
             
         session_data = self.get_session_data()
+        
+        # Validate session data
+        is_valid, validation_message = self.validate_session_data(session_data)
+        if not is_valid:
+            messagebox.showerror("Validation Error", validation_message)
+            return
+        
         try:
             session_name = session_data.get('session_name', 'Unknown')
             target_name = session_data.get('target_name', 'Unknown')
@@ -816,11 +920,11 @@ class SessionsTab:
         """Get current target and coordinates from Stellarium."""
         def stellarium_worker():
             """Worker function to fetch data from Stellarium in background thread."""
+            # Get Stellarium connection settings from CONFIG section (outside try block)
+            stellarium_ip = self.config_manager.get_setting("CONFIG", "stellarium_ip", "192.168.1.20")
+            stellarium_port = self.config_manager.get_setting("CONFIG", "stellarium_port", 8090)
+            
             try:
-                # Get Stellarium connection settings from CONFIG section
-                stellarium_ip = self.config_manager.get_setting("CONFIG", "stellarium_ip", "192.168.1.20")
-                stellarium_port = self.config_manager.get_setting("CONFIG", "stellarium_port", 8090)
-                
                 # Build the API URL for getting object info
                 base_url = f"http://{stellarium_ip}:{stellarium_port}/api"
                 
